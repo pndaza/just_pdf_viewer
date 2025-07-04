@@ -93,14 +93,6 @@ The viewer automatically:
 - Handles orientation changes
 - Maintains scroll position during rebuilds
 
-## Requirements
-
-- Flutter 3.0+
-- Dart 2.17+
-- iOS 11+/Android API 21+
-
-[//]: # (Add screenshot section here with actual screenshot paths)
-
 ## License
 
 MIT License - See [LICENSE](LICENSE) for details.

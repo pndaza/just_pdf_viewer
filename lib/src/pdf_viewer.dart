@@ -2,8 +2,10 @@ import 'dart:io';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/services.dart';
 import 'package:pdfrx/pdfrx.dart';
 import 'color_mode.dart';
 import 'pdf_controller.dart';
@@ -327,10 +329,33 @@ class _JustPdfViewerState extends State<JustPdfViewer>
             });
           }
         },
+        onPointerSignal: (event) {
+          // Handle mouse wheel events to prevent zoom on scroll
+          if (event is PointerScrollEvent) {
+            if (_pageController?.hasClients == true) {
+              final scrollDelta = event.scrollDelta.dy;
+              
+              // Calculate the page to scroll to
+              final currentPage = _pageController!.page ?? 0;
+              final targetPage = scrollDelta > 0 
+                  ? (currentPage + 0.1).clamp(0, document.pages.length - 1.0)
+                  : (currentPage - 0.1).clamp(0, document.pages.length - 1.0);
+              
+              _pageController!.animateToPage(
+                targetPage.round(),
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeInOut,
+              );
+            }
+          }
+        },
         child: InteractiveViewer(
           transformationController: _transformationController,
           maxScale: widget.maxScale,
           minScale: widget.minScale,
+          // Disable mouse wheel zoom by setting panEnabled to false on desktop
+          panEnabled: !kIsWeb && (isIOS || isAndroid) ? true : _activePointers.length >= 2,
+          scaleEnabled: _activePointers.length >= 2 || !kIsWeb && (isIOS || isAndroid),
           onInteractionUpdate: (details) {
             if (details.scale != 1.0) {
               setState(() {

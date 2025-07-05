@@ -73,6 +73,9 @@ class _JustPdfViewerState extends State<JustPdfViewer>
   ColorMode? _lastColorMode;
 
   double _scrollbarTopPadding = 0.0;
+  final TransformationController _transformationController =
+      TransformationController();
+  Offset? _doubleTapPosition;
 
   @override
   bool get wantKeepAlive => true;
@@ -147,6 +150,7 @@ class _JustPdfViewerState extends State<JustPdfViewer>
     _pageController = null;
     _scrollbarHideTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
+    _transformationController.dispose();
     super.dispose();
   }
 
@@ -323,27 +327,47 @@ class _JustPdfViewerState extends State<JustPdfViewer>
             });
           }
         },
-        child: GestureDetector(
-          onDoubleTap: isMobile
-              ? () {
-                  // Toggle between default scale and zoomed in
-                  setState(() {
-                    _currentScale =
-                        _currentScale > widget.minScale ? widget.minScale : 2.5;
-                  });
-                }
-              : null,
-          child: InteractiveViewer(
-            maxScale: widget.maxScale,
-            minScale: widget.minScale,
-            onInteractionUpdate: (details) {
-              if (details.scale != 1.0) {
-                setState(() {
-                  _currentScale = (_currentScale * details.scale)
-                      .clamp(widget.minScale, widget.maxScale);
-                });
+        child: InteractiveViewer(
+          transformationController: _transformationController,
+          maxScale: widget.maxScale,
+          minScale: widget.minScale,
+          onInteractionUpdate: (details) {
+            if (details.scale != 1.0) {
+              setState(() {
+                _currentScale = (_currentScale * details.scale)
+                    .clamp(widget.minScale, widget.maxScale);
+              });
+            }
+            _showScrollbar();
+          },
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onDoubleTapDown: (details) {
+              // Store the tap position in the coordinate space of the child
+              _doubleTapPosition = details.localPosition;
+            },
+            onDoubleTap: () {
+              final position = _doubleTapPosition;
+              final double targetScale = 2.5;
+
+              if (position == null) return;
+
+              final currentMatrix = _transformationController.value;
+
+              if (currentMatrix != Matrix4.identity()) {
+                // Reset to identity (no zoom)
+                _transformationController.value = Matrix4.identity();
+              } else {
+                // Calculate the translation to keep the tapped point under the finger
+                final x = -position.dx * (targetScale - 1);
+                final y = -position.dy * (targetScale - 1);
+
+                final zoomed = Matrix4.identity()
+                  ..translate(x, y)
+                  ..scale(targetScale);
+
+                _transformationController.value = zoomed;
               }
-              _showScrollbar();
             },
             child: PageView.builder(
               controller: _pageController,

@@ -2,13 +2,14 @@ import 'dart:io';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
-import 'package:pdfrx/pdfrx.dart';
 import 'color_mode.dart';
-import 'pdf_controller.dart';
+import 'gesture_handler.dart';
+import 'just_pdf_controller.dart';
+import 'pdf_page_item.dart';
+import 'utils/viewport_utils.dart';
 
 typedef OnPageChanged = void Function(int);
 typedef OnDocumentLoaded = void Function(PdfDocument document);
@@ -19,7 +20,7 @@ class JustPdfViewer extends StatefulWidget {
   final File? file;
   final Uint8List? memory;
   final Axis scrollDirection;
-  final PdfController? pdfController;
+  final JustPdfController? pdfController;
   final OnPageChanged? onPageChanged;
   final OnDocumentLoaded? onDocumentLoaded;
   final OnLoadError? onLoadError;
@@ -48,8 +49,11 @@ class JustPdfViewer extends StatefulWidget {
     this.scrollbarColor,
     this.loadingWidget,
     this.errorWidget,
-  }) : assert((assetPath != null) ^ (file != null) ^ (memory != null),
-            'Either assetPath or file must be provided, but not both');
+  }) : assert(
+            (assetPath != null && file == null && memory == null) ||
+                (assetPath == null && file != null && memory == null) ||
+                (assetPath == null && file == null && memory != null),
+            'Exactly one of assetPath, file, or memory must be provided.');
 
   @override
   State<JustPdfViewer> createState() => _JustPdfViewerState();
@@ -57,16 +61,15 @@ class JustPdfViewer extends StatefulWidget {
 
 class _JustPdfViewerState extends State<JustPdfViewer>
     with WidgetsBindingObserver, AutomaticKeepAliveClientMixin {
+  late final JustPdfController _controller;
   PageController? _pageController;
-  final Set<int> _activePointers = {};
-  bool _canScroll = true;
   PdfDocument? _document;
   bool _isLoading = true;
   dynamic _loadError;
-  double _currentScale = 1.0;
+  final Set<int> _activePointers = {};
+  bool _canScroll = true;
   Timer? _scrollbarHideTimer;
   bool _isScrollbarVisible = false;
-  int _currentPageIndex = 0;
   double _currentViewportFraction = 0.8;
 
   // Cache values to prevent unnecessary rebuilds
@@ -77,7 +80,7 @@ class _JustPdfViewerState extends State<JustPdfViewer>
   double _scrollbarTopPadding = 0.0;
   final TransformationController _transformationController =
       TransformationController();
-  Offset? _doubleTapPosition;
+  GestureHandler? _gestureHandler;
 
   @override
   bool get wantKeepAlive => true;
@@ -86,10 +89,25 @@ class _JustPdfViewerState extends State<JustPdfViewer>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _currentPageIndex = (widget.pdfController?.initialPage ?? 1) - 1;
+    _controller = JustPdfController()
+      ..addListener(_handleControllerChange);
+      
     _lastScrollDirection = widget.scrollDirection;
     _lastColorMode = widget.colorMode;
+    
+    // Initialize gesture handler based on platform
+    final isMobile = defaultTargetPlatform == TargetPlatform.iOS ||
+                    defaultTargetPlatform == TargetPlatform.android;
+    _gestureHandler = GestureHandler(
+      isMobile: isMobile,
+      transformationController: _transformationController,
+    );
+    
     _loadDocument();
+  }
+
+  void _handleControllerChange() {
+    if (mounted) setState(() {});
   }
 
   @override
@@ -105,7 +123,6 @@ class _JustPdfViewerState extends State<JustPdfViewer>
 
     if (oldWidget.colorMode != widget.colorMode) {
       _lastColorMode = widget.colorMode;
-      // Color mode change doesn't need controller update, just rebuild
       setState(() {});
     }
 
@@ -114,33 +131,25 @@ class _JustPdfViewerState extends State<JustPdfViewer>
     }
 
     if (oldWidget.assetPath != widget.assetPath ||
-        oldWidget.file != widget.file) {
+        oldWidget.file != widget.file ||
+        !listEquals(oldWidget.memory, widget.memory)) {
       _loadDocument();
     }
   }
 
   void _handleScrollDirectionChange() {
-    // Preserve current page when scroll direction changes
-    if (_pageController != null && _pageController!.hasClients) {
-      _currentPageIndex = _pageController!.page?.round() ?? _currentPageIndex;
-    }
-
-    // Dispose old controller and create new one with preserved page
+    // Do not access _pageController.page here as the controller may not be attached
     _pageController?.dispose();
     _pageController = null;
-    _lastConstraints = null; // Force recalculation of viewport fraction
+    _lastConstraints = null;
 
-    // Trigger rebuild to create new controller with correct viewport fraction
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        setState(() {});
-      }
+      if (mounted) setState(() {});
     });
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Handle app lifecycle changes to properly manage PDF document resources
     if (state == AppLifecycleState.resumed && _document == null) {
       _loadDocument();
     }
@@ -148,8 +157,8 @@ class _JustPdfViewerState extends State<JustPdfViewer>
 
   @override
   void dispose() {
+    _controller.dispose();
     _pageController?.dispose();
-    _pageController = null;
     _scrollbarHideTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     _transformationController.dispose();
@@ -157,33 +166,30 @@ class _JustPdfViewerState extends State<JustPdfViewer>
   }
 
   Future<void> _loadDocument() async {
-    if (mounted) {
-      setState(() {
-        _isLoading = true;
-        _loadError = null;
-      });
-    }
+    _transformationController.value = Matrix4.identity();
+    
+    setState(() {
+      _isLoading = true;
+      _loadError = null;
+      _document = null;
+    });
 
     try {
-      final document = await _openPdf();
-      if (mounted) {
-        setState(() {
-          _document = document;
-          _isLoading = false;
-          // Reset current page index to ensure it's within valid range
-          _currentPageIndex =
-              _currentPageIndex.clamp(0, document.pages.length - 1);
-        });
-        widget.onDocumentLoaded?.call(document);
-      }
+      final documentFuture = switch ((widget.assetPath, widget.file, widget.memory)) {
+        (String path, null, null) => PdfDocument.openAsset(path),
+        (null, File file, null) => PdfDocument.openFile(file.path),
+        (null, null, Uint8List data) => PdfDocument.openData(data),
+        _ => throw ArgumentError('Exactly one source must be provided'),
+      };
+      _document = await documentFuture;
+      widget.onDocumentLoaded?.call(_document!);
     } catch (error) {
-      if (mounted) {
-        setState(() {
-          _loadError = error;
-          _isLoading = false;
-        });
-        widget.onLoadError?.call(error);
-      }
+      _loadError = error;
+      widget.onLoadError?.call(error);
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
     }
   }
 
@@ -194,31 +200,27 @@ class _JustPdfViewerState extends State<JustPdfViewer>
 
     if (mounted) {
       SchedulerBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        setState(() => _isScrollbarVisible = true);
+        if (mounted) setState(() => _isScrollbarVisible = true);
       });
     }
     _scrollbarHideTimer = Timer(const Duration(seconds: 2), () {
-      if (mounted) {
-        setState(() => _isScrollbarVisible = false);
-      }
+      if (mounted) setState(() => _isScrollbarVisible = false);
     });
   }
+
 
   @override
   Widget build(BuildContext context) {
     super.build(context);
 
-    final initialPage = widget.pdfController?.initialPage ?? 1;
     final double statusBarHeight = MediaQuery.of(context).padding.top;
     if (widget.scrollDirection == Axis.vertical) {
       _scrollbarTopPadding = statusBarHeight;
-      // print('statusBarHeight: $statusBarHeight');
     }
 
+
     if (_isLoading) {
-      return widget.loadingWidget ??
-          const Center(child: CircularProgressIndicator());
+      return widget.loadingWidget ?? const Center(child: CircularProgressIndicator());
     }
 
     if (_loadError != null) {
@@ -242,17 +244,12 @@ class _JustPdfViewerState extends State<JustPdfViewer>
           _lastConstraints = currentSize;
           _lastScrollDirection = currentScrollDirection;
 
-          // final parentWidth = constraints.maxWidth;
-          // final parentHeight = constraints.maxHeight;
+          final width = _document!.pages.fold(0.0, (prev, page) => prev + page.width) /
+              _document!.pages.length;
+          final height = _document!.pages.fold(0.0, (prev, page) => prev + page.height) /
+              _document!.pages.length;
 
-          final width =
-              _document!.pages.fold(0.0, (prev, page) => prev + page.width) /
-                  _document!.pages.length;
-          final height =
-              _document!.pages.fold(0.0, (prev, page) => prev + page.height) /
-                  _document!.pages.length;
-
-          double newViewportFraction = _calculateViewportFraction(
+          double newViewportFraction = ViewportUtils.calculateViewportFraction(
               scrollAxis: widget.scrollDirection,
               parentWidth: constraints.maxWidth,
               parentHeight: constraints.maxHeight,
@@ -261,173 +258,76 @@ class _JustPdfViewerState extends State<JustPdfViewer>
 
           if (_pageController == null ||
               (_currentViewportFraction - newViewportFraction).abs() > 0.01) {
-            // Preserve current page if controller exists
-            if (_pageController != null && _pageController!.hasClients) {
-              _currentPageIndex =
-                  _pageController!.page?.round() ?? _currentPageIndex;
-            }
-
             _pageController?.dispose();
             _pageController = PageController(
-                initialPage: _currentPageIndex,
+                initialPage: _controller.currentPage,
                 viewportFraction: newViewportFraction,
                 keepPage: false);
             _currentViewportFraction = newViewportFraction;
+            _controller.attachPageController(_pageController!); // Attach the PageController
+            
+            // Now that we have a new controller, go to the current page
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted && _pageController != null && _pageController!.hasClients) {
+                _controller.gotoPage(_controller.currentPage);
+              }
+            });
           }
         }
-        widget.pdfController?.attachController(_pageController!);
+        // Initialize the external pdfController with the document and internal pageController
+        if (widget.pdfController != null && widget.pdfController!.pageController == null) {
+          widget.pdfController!.initialize(_document!, initialPage: _controller.currentPage, pageController: _pageController);
+        }
 
         return NotificationListener<ScrollNotification>(
           onNotification: (notification) {
             _showScrollbar();
             return false;
           },
-          child: _buildPdfView(context, _document!, initialPage),
+          child: _buildPdfView(context, _document!),
         );
       },
     );
   }
 
-  Widget _buildPdfView(
-    BuildContext context,
-    PdfDocument document,
-    int initialPage,
-  ) {
+  Widget _buildPdfView(BuildContext context, PdfDocument document) {
     if (_pageController == null) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    final bool isIOS = defaultTargetPlatform == TargetPlatform.iOS;
-    final bool isAndroid = defaultTargetPlatform == TargetPlatform.android;
-    final bool isMobile = isIOS || isAndroid;
-
-    // Enhanced gesture handling for better zoom and pan experience
     Widget scrollableContent = RepaintBoundary(
-      child: Listener(
-        onPointerDown: (event) {
-          _activePointers.add(event.pointer);
-          if (_activePointers.length >= 2) {
-            setState(() {
-              _canScroll = false;
-            });
-          }
-          _showScrollbar();
-        },
-        onPointerUp: (event) {
-          _activePointers.remove(event.pointer);
-          if (_activePointers.length < 2) {
-            setState(() {
-              _canScroll = true;
-            });
-          }
-        },
-        onPointerCancel: (event) {
-          _activePointers.remove(event.pointer);
-          if (_activePointers.length < 2) {
-            setState(() {
-              _canScroll = true;
-            });
-          }
-        },
-        onPointerSignal: (event) {
-          // Handle mouse wheel events to prevent zoom on scroll
-          if (event is PointerScrollEvent) {
-            if (_pageController?.hasClients == true) {
-              final scrollDelta = event.scrollDelta.dy;
-              
-              // Calculate the page to scroll to
-              final currentPage = _pageController!.page ?? 0;
-              final targetPage = scrollDelta > 0 
-                  ? (currentPage + 0.1).clamp(0, document.pages.length - 1.0)
-                  : (currentPage - 0.1).clamp(0, document.pages.length - 1.0);
-              
-              _pageController!.animateToPage(
-                targetPage.round(),
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeInOut,
-              );
+      child: _gestureHandler!.buildInteractiveViewer(
+        child: PageView.builder(
+          controller: _pageController,
+          scrollDirection: widget.scrollDirection,
+          physics: _canScroll
+              ? const ClampingScrollPhysics(parent: PageScrollPhysics())
+              : const NeverScrollableScrollPhysics(),
+          pageSnapping: widget.scrollDirection == Axis.horizontal,
+          onPageChanged: (index) {
+            // Only update if the page actually changed
+            if (index != _controller.currentPage) {
+              _controller.gotoPage(index);
+              widget.onPageChanged?.call(index + 1);
             }
-          }
-        },
-        child: InteractiveViewer(
-          transformationController: _transformationController,
-          maxScale: widget.maxScale,
-          minScale: widget.minScale,
-          // Disable mouse wheel zoom by setting panEnabled to false on desktop
-          panEnabled: !kIsWeb && (isIOS || isAndroid) ? true : _activePointers.length >= 2,
-          scaleEnabled: _activePointers.length >= 2 || !kIsWeb && (isIOS || isAndroid),
-          onInteractionUpdate: (details) {
-            if (details.scale != 1.0) {
-              setState(() {
-                _currentScale = (_currentScale * details.scale)
-                    .clamp(widget.minScale, widget.maxScale);
-              });
-            }
-            _showScrollbar();
           },
-          child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onDoubleTapDown: (details) {
-              // Store the tap position in the coordinate space of the child
-              _doubleTapPosition = details.localPosition;
-            },
-            onDoubleTap: () {
-              final position = _doubleTapPosition;
-              final double targetScale = 2.5;
-
-              if (position == null) return;
-
-              final currentMatrix = _transformationController.value;
-
-              if (currentMatrix != Matrix4.identity()) {
-                // Reset to identity (no zoom)
-                _transformationController.value = Matrix4.identity();
-              } else {
-                // Calculate the translation to keep the tapped point under the finger
-                final x = -position.dx * (targetScale - 1);
-                final y = -position.dy * (targetScale - 1);
-
-                final zoomed = Matrix4.identity()
-                  ..translate(x, y)
-                  ..scale(targetScale);
-
-                _transformationController.value = zoomed;
-              }
-            },
-            child: PageView.builder(
-              controller: _pageController,
-              scrollDirection: widget.scrollDirection,
-              physics: _canScroll
-                  ? const ClampingScrollPhysics(parent: PageScrollPhysics())
-                  : const NeverScrollableScrollPhysics(),
-              pageSnapping: widget.scrollDirection == Axis.horizontal &&
-                  _currentScale <= 1.2,
-              onPageChanged: (index) {
-                _currentPageIndex = index;
-                widget.onPageChanged?.call(index + 1);
-              },
-              itemCount: document.pages.length,
-              itemBuilder: (context, index) {
-                return _PdfPageItem(
-                  document: document,
-                  pageNumber: index + 1,
-                  colorMode: widget.colorMode,
-                );
-              },
-            ),
-          ),
+          itemCount: document.pages.length,
+          itemBuilder: (context, index) {
+            return PdfPageItem(
+              document: document,
+              pageNumber: index + 1,
+              colorMode: widget.colorMode,
+            );
+          },
         ),
       ),
     );
 
-    // Improved scrollbar behavior with platform-specific differences
     return ScrollConfiguration(
       behavior: const ScrollBehavior().copyWith(
         scrollbars: false,
-        overscroll: isMobile,
-        physics: isMobile
-            ? const BouncingScrollPhysics()
-            : const ClampingScrollPhysics(),
+        overscroll: true,
+        physics: const BouncingScrollPhysics(),
       ),
       child: !widget.showScrollbar
           ? scrollableContent
@@ -435,83 +335,14 @@ class _JustPdfViewerState extends State<JustPdfViewer>
               controller: _pageController,
               thickness: 30,
               minThumbLength: 50,
-              thumbColor: widget.scrollbarColor ??
-                  Colors.blueGrey.withValues(alpha: .8),
+              thumbColor: widget.scrollbarColor ?? Colors.blueGrey.withOpacity(0.8),
               radius: const Radius.circular(10),
-              padding: EdgeInsets.only(
-                  right: 6, top: _scrollbarTopPadding, bottom: 24),
+              padding: EdgeInsets.only(right: 6, top: _scrollbarTopPadding, bottom: 24),
               timeToFade: const Duration(seconds: 2),
               crossAxisMargin: 4,
               child: scrollableContent),
     );
   }
 
-  Future<PdfDocument> _openPdf() async {
-    if (widget.assetPath != null) {
-      return PdfDocument.openAsset(widget.assetPath!);
-    } else if (widget.file != null) {
-      return PdfDocument.openFile(widget.file!.path);
-    } else if (widget.memory != null) {
-      return PdfDocument.openData(widget.memory!);
-    } else {
-      throw Exception('Either assetPath or file must be provided');
-    }
-  }
 
-  double _calculateViewportFraction({
-    required Axis scrollAxis,
-    required double parentWidth,
-    required double parentHeight,
-    required double pdfWidth,
-    required double pdfHeight,
-  }) {
-    if (scrollAxis == Axis.horizontal) {
-      return 1.0;
-    }
-
-    final screenAspectRatio = parentHeight / parentWidth;
-    final pdfAspectRatio = pdfHeight / pdfWidth;
-    return pdfAspectRatio / screenAspectRatio;
-  }
-}
-
-class _PdfPageItem extends StatelessWidget {
-  const _PdfPageItem({
-    required this.document,
-    required this.pageNumber,
-    required this.colorMode,
-  });
-
-  final PdfDocument document;
-  final int pageNumber;
-  final ColorMode colorMode;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      alignment: Alignment.center,
-      padding: const EdgeInsets.only(bottom: 2),
-      color: _getBackGroundColor(colorMode),
-      child: ColorFiltered(
-        colorFilter: ColorFilter.matrix(predefinedFilters[colorMode]!),
-        child: PdfPageView(
-          document: document,
-          pageNumber: pageNumber,
-        ),
-      ),
-    );
-  }
-
-  Color _getBackGroundColor(ColorMode colorMode) {
-    switch (colorMode) {
-      case ColorMode.day:
-        return Colors.grey.shade200;
-      case ColorMode.night:
-        return Colors.grey.shade800;
-      case ColorMode.sepia:
-        return const Color.fromARGB(220, 255, 255, 213);
-      case ColorMode.grayscale:
-        return Colors.grey.shade300;
-    }
-  }
 }

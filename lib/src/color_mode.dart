@@ -1,3 +1,5 @@
+import 'package:flutter/material.dart';
+
 enum ColorMode { day, night, sepia, grayscale }
 
 Map<ColorMode, List<double>> predefinedFilters = {
@@ -30,3 +32,18 @@ Map<ColorMode, List<double>> predefinedFilters = {
     0, 0, 0, 1, 0, //
   ],
 };
+
+extension ColorModeExtension on ColorMode {
+  Color get backgroundColor {
+    switch (this) {
+      case ColorMode.day:
+        return Colors.grey.shade200;
+      case ColorMode.night:
+        return Colors.grey.shade800;
+      case ColorMode.sepia:
+        return const Color.fromARGB(220, 255, 255, 213);
+      case ColorMode.grayscale:
+        return Colors.grey.shade300;
+    }
+  }
+}

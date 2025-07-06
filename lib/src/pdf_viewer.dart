@@ -7,6 +7,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'color_mode.dart';
 import 'zoom_view.dart';
+import 'zoom_controller.dart';
 import 'just_pdf_controller.dart';
 import 'pdf_page_item.dart';
 import 'utils/viewport_utils.dart';
@@ -31,6 +32,7 @@ class JustPdfViewer extends StatefulWidget {
   final Color? scrollbarColor;
   final Widget? loadingWidget;
   final Widget? errorWidget;
+  final ZoomController? zoomController;
 
   const JustPdfViewer({
     super.key,
@@ -49,6 +51,7 @@ class JustPdfViewer extends StatefulWidget {
     this.scrollbarColor,
     this.loadingWidget,
     this.errorWidget,
+    this.zoomController,
   }) : assert(
             (assetPath != null && file == null && memory == null) ||
                 (assetPath == null && file != null && memory == null) ||
@@ -71,6 +74,7 @@ class _JustPdfViewerState extends State<JustPdfViewer>
   Timer? _scrollbarHideTimer;
   bool _isScrollbarVisible = false;
   double _currentViewportFraction = 0.8;
+  bool _isInitializing = false;
 
   // Cache values to prevent unnecessary rebuilds
   Size? _lastConstraints;
@@ -96,7 +100,9 @@ class _JustPdfViewerState extends State<JustPdfViewer>
   }
 
   void _handleControllerChange() {
-    if (mounted) setState(() {});
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   @override
@@ -127,13 +133,21 @@ class _JustPdfViewerState extends State<JustPdfViewer>
   }
 
   void _handleScrollDirectionChange() {
-    // Do not access _pageController.page here as the controller may not be attached
+    // Store current page before disposing controller
+    final currentPage = _controller.currentPage;
+    
+    // Dispose old controller
     _pageController?.dispose();
     _pageController = null;
     _lastConstraints = null;
 
+    // Schedule rebuild after frame to ensure proper initialization
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) setState(() {});
+      if (mounted) {
+        // Ensure we maintain the current page after scroll direction change
+        _controller.gotoPage(currentPage);
+        setState(() {});
+      }
     });
   }
 
@@ -173,9 +187,11 @@ class _JustPdfViewerState extends State<JustPdfViewer>
       _loadError = error;
       widget.onLoadError?.call(error);
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -194,6 +210,49 @@ class _JustPdfViewerState extends State<JustPdfViewer>
     });
   }
 
+  void _initializePageController(BoxConstraints constraints) {
+    if (_document == null || _isInitializing) return;
+    
+    _isInitializing = true;
+    
+    final width = _document!.pages.fold(0.0, (prev, page) => prev + page.width) /
+        _document!.pages.length;
+    final height = _document!.pages.fold(0.0, (prev, page) => prev + page.height) /
+        _document!.pages.length;
+
+    double newViewportFraction = ViewportUtils.calculateViewportFraction(
+        scrollAxis: widget.scrollDirection,
+        parentWidth: constraints.maxWidth,
+        parentHeight: constraints.maxHeight,
+        pdfWidth: width,
+        pdfHeight: height);
+
+    // Store current page before creating new controller
+    final currentPage = _controller.currentPage;
+    
+    // Dispose old controller
+    _pageController?.dispose();
+    
+    // Create new controller with current page
+    _pageController = PageController(
+        initialPage: currentPage,
+        viewportFraction: newViewportFraction,
+        keepPage: false);
+    
+    _currentViewportFraction = newViewportFraction;
+    
+    // Attach to internal controller
+    _controller.attachPageController(_pageController!);
+    
+    // Initialize external controller if provided
+    if (widget.pdfController != null) {
+      widget.pdfController!.initialize(_document!, 
+          initialPage: currentPage, 
+          pageController: _pageController);
+    }
+    
+    _isInitializing = false;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -203,7 +262,6 @@ class _JustPdfViewerState extends State<JustPdfViewer>
     if (widget.scrollDirection == Axis.vertical) {
       _scrollbarTopPadding = statusBarHeight;
     }
-
 
     if (_isLoading) {
       return widget.loadingWidget ?? const Center(child: CircularProgressIndicator());
@@ -223,46 +281,17 @@ class _JustPdfViewerState extends State<JustPdfViewer>
         final currentSize = Size(constraints.maxWidth, constraints.maxHeight);
         final currentScrollDirection = widget.scrollDirection;
 
-        if (_lastConstraints == null ||
+        // Check if we need to reinitialize the page controller
+        bool needsReinit = _pageController == null ||
+            _lastConstraints == null ||
             (_lastConstraints!.width - currentSize.width).abs() > 1 ||
             (_lastConstraints!.height - currentSize.height).abs() > 1 ||
-            _lastScrollDirection != currentScrollDirection) {
+            _lastScrollDirection != currentScrollDirection;
+
+        if (needsReinit) {
           _lastConstraints = currentSize;
           _lastScrollDirection = currentScrollDirection;
-
-          final width = _document!.pages.fold(0.0, (prev, page) => prev + page.width) /
-              _document!.pages.length;
-          final height = _document!.pages.fold(0.0, (prev, page) => prev + page.height) /
-              _document!.pages.length;
-
-          double newViewportFraction = ViewportUtils.calculateViewportFraction(
-              scrollAxis: widget.scrollDirection,
-              parentWidth: constraints.maxWidth,
-              parentHeight: constraints.maxHeight,
-              pdfWidth: width,
-              pdfHeight: height);
-
-          if (_pageController == null ||
-              (_currentViewportFraction - newViewportFraction).abs() > 0.01) {
-            _pageController?.dispose();
-            _pageController = PageController(
-                initialPage: _controller.currentPage,
-                viewportFraction: newViewportFraction,
-                keepPage: false);
-            _currentViewportFraction = newViewportFraction;
-            _controller.attachPageController(_pageController!); // Attach the PageController
-            
-            // Now that we have a new controller, go to the current page
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted && _pageController != null && _pageController!.hasClients) {
-                _controller.gotoPage(_controller.currentPage);
-              }
-            });
-          }
-        }
-        // Initialize the external pdfController with the document and internal pageController
-        if (widget.pdfController != null && widget.pdfController!.pageController == null) {
-          widget.pdfController!.initialize(_document!, initialPage: _controller.currentPage, pageController: _pageController);
+          _initializePageController(constraints);
         }
 
         return NotificationListener<ScrollNotification>(
@@ -283,9 +312,11 @@ class _JustPdfViewerState extends State<JustPdfViewer>
 
     Widget scrollableContent = RepaintBoundary(
       child: ZoomView(
-        isMobile: defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.android,
+        isMobile: defaultTargetPlatform == TargetPlatform.iOS || 
+                 defaultTargetPlatform == TargetPlatform.android,
         minScale: widget.minScale,
         maxScale: widget.maxScale,
+        controller: widget.zoomController,
         child: PageView.builder(
           controller: _pageController,
           scrollDirection: widget.scrollDirection,
@@ -294,11 +325,10 @@ class _JustPdfViewerState extends State<JustPdfViewer>
               : const NeverScrollableScrollPhysics(),
           pageSnapping: widget.scrollDirection == Axis.horizontal,
           onPageChanged: (index) {
-            // Only update if the page actually changed
-            if (index != _controller.currentPage) {
-              _controller.gotoPage(index);
-              widget.onPageChanged?.call(index + 1);
-            }
+            // Update controller state
+            _controller.onPageChanged(index);
+            // Call external callback
+            widget.onPageChanged?.call(index + 1);
           },
           itemCount: document.pages.length,
           itemBuilder: (context, index) {
@@ -326,12 +356,15 @@ class _JustPdfViewerState extends State<JustPdfViewer>
               minThumbLength: 50,
               thumbColor: widget.scrollbarColor ?? Colors.blueGrey.withOpacity(0.8),
               radius: const Radius.circular(10),
-              padding: EdgeInsets.only(right: 6, top: _scrollbarTopPadding, bottom: 24),
+              padding: EdgeInsets.only(
+                right: 6, 
+                top: _scrollbarTopPadding, 
+                bottom: 24
+              ),
               timeToFade: const Duration(seconds: 2),
               crossAxisMargin: 4,
-              child: scrollableContent),
+              child: scrollableContent,
+            ),
     );
   }
-
-
 }

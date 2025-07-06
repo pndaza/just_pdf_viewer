@@ -7,31 +7,78 @@ class JustPdfController with ChangeNotifier {
   PdfDocument? _document;
   PageController? _pageController;
   int _currentPage = 0;
+  int? _pendingPage;
   double _currentScale = 1.0;
+  bool _ownsController = false;
+  bool _isAttaching = false;
 
   void initialize(PdfDocument document, {int initialPage = 0, PageController? pageController}) {
     _document = document;
     _currentPage = initialPage.clamp(0, document.pages.length - 1);
     if (pageController != null) {
       _pageController = pageController;
+      _ownsController = false;
+    } else {
+      _pageController = PageController(initialPage: _currentPage);
+      _ownsController = true;
     }
     notifyListeners();
   }
 
   void attachPageController(PageController pageController) {
+    if (_isAttaching) return; // Prevent recursive calls
+    _isAttaching = true;
+    
+    // Store current page before disposing old controller
+    final currentPosition = _currentPage;
+
+    if (_ownsController && _pageController != null) {
+      _pageController!.dispose();
+    }
+
     _pageController = pageController;
-    // Do not call notifyListeners here to avoid setState during build errors.
+    _ownsController = false;
+
+    // Schedule navigation to current page after controller is attached
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _isAttaching = false;
+      if (_pageController?.hasClients == true) {
+        final pageToGo = _pendingPage ?? currentPosition;
+        try {
+          _pageController!.jumpToPage(pageToGo);
+          _pendingPage = null;
+        } catch (e) {
+          // If jumpToPage fails, store as pending
+          _pendingPage = pageToGo;
+        }
+      } else {
+        _pendingPage = currentPosition;
+      }
+    });
   }
 
   // Public API
   int get currentPage => _currentPage;
   double get currentScale => _currentScale;
   PageController? get pageController => _pageController;
+  PdfDocument? get document => _document;
 
   void gotoPage(int page) {
     if (_document == null) return;
-    _currentPage = page.clamp(0, _document!.pages.length - 1);
-    _pageController?.jumpToPage(_currentPage);
+    final newPage = page.clamp(0, _document!.pages.length - 1);
+    _currentPage = newPage;
+
+    if (_pageController?.hasClients == true && !_isAttaching) {
+      try {
+        _pageController!.jumpToPage(newPage);
+        _pendingPage = null;
+      } catch (e) {
+        // If navigation fails, store as pending
+        _pendingPage = newPage;
+      }
+    } else {
+      _pendingPage = newPage;
+    }
     notifyListeners();
   }
 
@@ -40,9 +87,33 @@ class JustPdfController with ChangeNotifier {
     notifyListeners();
   }
 
+  // Internal method to handle page changes from PageView
+  void onPageChanged(int page) {
+    if (_currentPage != page) {
+      _currentPage = page;
+      _pendingPage = null;
+      notifyListeners();
+    }
+  }
+
+  // Method to retry pending navigation
+  void _retryPendingNavigation() {
+    if (_pendingPage != null && _pageController?.hasClients == true && !_isAttaching) {
+      try {
+        _pageController!.jumpToPage(_pendingPage!);
+        _pendingPage = null;
+      } catch (e) {
+        // Keep pending if still fails
+      }
+    }
+  }
+
   @override
   void dispose() {
-    _pageController?.dispose();
+    // Only dispose controller if we created it ourselves
+    if (_ownsController && _pageController != null) {
+      _pageController!.dispose();
+    }
     super.dispose();
   }
 }

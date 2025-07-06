@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'color_mode.dart';
-import 'gesture_handler.dart';
+import 'zoom_view.dart';
 import 'just_pdf_controller.dart';
 import 'pdf_page_item.dart';
 import 'utils/viewport_utils.dart';
@@ -78,9 +78,6 @@ class _JustPdfViewerState extends State<JustPdfViewer>
   ColorMode? _lastColorMode;
 
   double _scrollbarTopPadding = 0.0;
-  final TransformationController _transformationController =
-      TransformationController();
-  GestureHandler? _gestureHandler;
 
   @override
   bool get wantKeepAlive => true;
@@ -94,14 +91,6 @@ class _JustPdfViewerState extends State<JustPdfViewer>
       
     _lastScrollDirection = widget.scrollDirection;
     _lastColorMode = widget.colorMode;
-    
-    // Initialize gesture handler based on platform
-    final isMobile = defaultTargetPlatform == TargetPlatform.iOS ||
-                    defaultTargetPlatform == TargetPlatform.android;
-    _gestureHandler = GestureHandler(
-      isMobile: isMobile,
-      transformationController: _transformationController,
-    );
     
     _loadDocument();
   }
@@ -161,13 +150,10 @@ class _JustPdfViewerState extends State<JustPdfViewer>
     _pageController?.dispose();
     _scrollbarHideTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
-    _transformationController.dispose();
     super.dispose();
   }
 
   Future<void> _loadDocument() async {
-    _transformationController.value = Matrix4.identity();
-    
     setState(() {
       _isLoading = true;
       _loadError = null;
@@ -296,7 +282,10 @@ class _JustPdfViewerState extends State<JustPdfViewer>
     }
 
     Widget scrollableContent = RepaintBoundary(
-      child: _gestureHandler!.buildInteractiveViewer(
+      child: ZoomView(
+        isMobile: defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.android,
+        minScale: widget.minScale,
+        maxScale: widget.maxScale,
         child: PageView.builder(
           controller: _pageController,
           scrollDirection: widget.scrollDirection,

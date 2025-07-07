@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:meta/meta.dart';
 import 'package:pdfrx/pdfrx.dart';
 import 'zoom_controller.dart';
 
@@ -14,6 +15,7 @@ class JustPdfController with ChangeNotifier {
   bool _ownsController = false;
   bool _isAttaching = false;
 
+  @internal
   void initialize(PdfDocument document, {int initialPage = 0, PageController? pageController, ZoomController? zoomController}) {
     _document = document;
     _currentPage = initialPage.clamp(0, document.pages.length - 1);
@@ -34,12 +36,13 @@ class JustPdfController with ChangeNotifier {
     notifyListeners();
   }
 
-  void attachPageController(PageController pageController) {
+  @internal
+  void attachPageController(PageController pageController, {int? initialPage}) {
     if (_isAttaching) return; // Prevent recursive calls
     _isAttaching = true;
     
     // Store current page before disposing old controller
-    final currentPosition = _currentPage;
+    final currentPosition = initialPage ?? _currentPage;
 
     if (_ownsController && _pageController != null) {
       _pageController!.dispose();

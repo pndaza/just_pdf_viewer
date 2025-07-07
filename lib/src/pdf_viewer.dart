@@ -1,10 +1,8 @@
-import 'dart:io';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
-import 'package:flutter/services.dart';
 import 'color_mode.dart';
 import 'zoom_view.dart';
 import 'zoom_controller.dart';
@@ -13,18 +11,13 @@ import 'pdf_page_item.dart';
 import 'utils/viewport_utils.dart';
 
 typedef OnPageChanged = void Function(int);
-typedef OnDocumentLoaded = void Function(PdfDocument document);
-typedef OnLoadError = void Function(dynamic error);
 
 class JustPdfViewer extends StatefulWidget {
-  final String? assetPath;
-  final File? file;
-  final Uint8List? memory;
+  final PdfDocument document; 
+  final int initialPage;
   final Axis scrollDirection;
   final JustPdfController? pdfController;
   final OnPageChanged? onPageChanged;
-  final OnDocumentLoaded? onDocumentLoaded;
-  final OnLoadError? onLoadError;
   final ColorMode colorMode;
   final bool showScrollbar;
   final double maxScale;
@@ -36,14 +29,11 @@ class JustPdfViewer extends StatefulWidget {
 
   const JustPdfViewer({
     super.key,
-    this.assetPath,
-    this.file,
-    this.memory,
+    required this.document, // Make document required
+    this.initialPage = 1,
     this.scrollDirection = Axis.vertical,
     this.pdfController,
     this.onPageChanged,
-    this.onDocumentLoaded,
-    this.onLoadError,
     this.colorMode = ColorMode.day,
     this.showScrollbar = true,
     this.maxScale = 5.0,
@@ -52,11 +42,7 @@ class JustPdfViewer extends StatefulWidget {
     this.loadingWidget,
     this.errorWidget,
     this.zoomController,
-  }) : assert(
-            (assetPath != null && file == null && memory == null) ||
-                (assetPath == null && file != null && memory == null) ||
-                (assetPath == null && file == null && memory != null),
-            'Exactly one of assetPath, file, or memory must be provided.');
+  });
 
   @override
   State<JustPdfViewer> createState() => _JustPdfViewerState();
@@ -69,7 +55,6 @@ class _JustPdfViewerState extends State<JustPdfViewer>
   PdfDocument? _document;
   bool _isLoading = true;
   dynamic _loadError;
-  final Set<int> _activePointers = {};
   bool _canScroll = true;
   Timer? _scrollbarHideTimer;
   bool _isScrollbarVisible = false;
@@ -95,6 +80,7 @@ class _JustPdfViewerState extends State<JustPdfViewer>
     _lastScrollDirection = widget.scrollDirection;
     _lastColorMode = widget.colorMode;
 
+    print('[PDF Viewer] Initializing with page: ${widget.initialPage}');
     _loadDocument();
   }
 
@@ -124,9 +110,10 @@ class _JustPdfViewerState extends State<JustPdfViewer>
       _handleScrollDirectionChange();
     }
 
-    if (oldWidget.assetPath != widget.assetPath ||
-        oldWidget.file != widget.file ||
-        !listEquals(oldWidget.memory, widget.memory)) {
+    // The document parameter is now immutable, so we don't need to check for changes here.
+    // The user is responsible for providing a new PdfDocument instance if the source changes.
+    // If the document instance itself changes, we should reload.
+    if (oldWidget.document != widget.document) {
       _loadDocument();
     }
   }
@@ -170,22 +157,16 @@ class _JustPdfViewerState extends State<JustPdfViewer>
     setState(() {
       _isLoading = true;
       _loadError = null;
-      _document = null;
+      _document = null; // Clear previous document
     });
 
     try {
-      final documentFuture =
-          switch ((widget.assetPath, widget.file, widget.memory)) {
-        (String path, null, null) => PdfDocument.openAsset(path, useProgressiveLoading: true),
-        (null, File file, null) => PdfDocument.openFile(file.path, useProgressiveLoading: true),
-        (null, null, Uint8List data) => PdfDocument.openData(data, useProgressiveLoading: true),
-        _ => throw ArgumentError('Exactly one source must be provided'),
-      };
-      _document = await documentFuture;
-      widget.onDocumentLoaded?.call(_document!);
+      // The PdfDocument from pdfrx is already loaded when passed to the widget.
+      // We just need to assign it.
+      _document = widget.document;
     } catch (error) {
       _loadError = error;
-      widget.onLoadError?.call(error);
+      // The onLoadError callback is removed as per the plan
     } finally {
       if (mounted) {
         setState(() {
@@ -230,21 +211,23 @@ class _JustPdfViewerState extends State<JustPdfViewer>
         pdfHeight: height);
 
     // Store current page before creating new controller
-    final currentPage = _controller.currentPage;
+    final currentPage = widget.initialPage;
 
     // Dispose old controller
     _pageController?.dispose();
 
     // Create new controller with current page
+    print('[PDF Viewer] Initializing PageController with page: $currentPage');
     _pageController = PageController(
-        initialPage: currentPage,
+        initialPage: (currentPage - 1).clamp(0, _document!.pages.length - 1), // Convert to 0-based and clamp
         viewportFraction: newViewportFraction,
         keepPage: false);
 
     _currentViewportFraction = newViewportFraction;
 
-    // Attach to internal controller
-    _controller.attachPageController(_pageController!);
+    // Attach to internal controller, passing the initial page directly.
+    _controller.attachPageController(_pageController!,
+        initialPage: currentPage - 1);
 
     // Initialize external controller if provided
     if (widget.pdfController != null) {
@@ -309,7 +292,7 @@ class _JustPdfViewerState extends State<JustPdfViewer>
     );
   }
 
-  Widget _buildPdfView(BuildContext context, PdfDocument document) {
+  Widget _buildPdfView(BuildContext context, PdfDocument document) { // Change type to dynamic
     if (_pageController == null) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -330,6 +313,7 @@ class _JustPdfViewerState extends State<JustPdfViewer>
           pageSnapping: widget.scrollDirection == Axis.horizontal,
           onPageChanged: (index) {
             // Update controller state
+            print('[PDF Viewer] Page changed to index: $index');
             _controller.onPageChanged(index);
             // Call external callback
             widget.onPageChanged?.call(index + 1);

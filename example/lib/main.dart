@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 import 'package:just_pdf_viewer/just_pdf_viewer.dart';
-import 'package:http/http.dart' as http;
 
 void main() => runApp(const PdfViewerExampleApp());
 
@@ -33,11 +32,12 @@ class _PdfViewerExampleState extends State<PdfViewerExample> {
   bool _isLoading = true;
   String? _errorMessage;
   Uint8List? _pdfBytes;
+  PdfDocument? _pdfDocument; 
   ColorMode _colorMode = ColorMode.day;
   bool _showScrollbar = true;
   Axis _scrollDirection = Axis.vertical;
   double _zoomLevel = 1.0; // Initial zoom level
-  String _pdf = 'assets/sample.pdf';
+  String _pdf = 'assets/sample_big.pdf';
 
   void _setZoomLevel(double newZoomLevel) {
     setState(() {
@@ -45,30 +45,6 @@ class _PdfViewerExampleState extends State<PdfViewerExample> {
           0.5, 3.0); // Clamp zoom level between 0.5x and 3.0x
     });
     _pdfController.setScale(_zoomLevel); // Update scale using controller
-  }
-
-  Future<void> _loadPdfFromNetwork() async {
-    try {
-      setState(() {
-        _isLoading = true;
-        _errorMessage = null;
-      });
-
-      final response = await http.get(Uri.parse(
-          'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf'));
-
-      if (response.statusCode == 200) {
-        setState(() {
-          _pdfBytes = response.bodyBytes;
-          _isLoading = false;
-        });
-      } else {
-        throw Exception('Failed to load PDF: ${response.statusCode}');
-      }
-    } catch (e) {
-      setState(() => _errorMessage = 'Failed to load PDF: $e');
-      setState(() => _isLoading = false);
-    }
   }
 
   void _goToPage(int page) {
@@ -84,28 +60,35 @@ class _PdfViewerExampleState extends State<PdfViewerExample> {
     setState(() => _currentPage = page);
   }
 
-  Future<Uint8List?> _loadPdfData(String assetPath) async {
-    final byteData = await rootBundle.load(assetPath);
-    return byteData.buffer.asUint8List(
-      byteData.offsetInBytes,
-      byteData.lengthInBytes,
-    );
+
+  Future<void> _loadPdfAsset(String assetPath) async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+      _pdfDocument = null;
+    });
+    try {
+      final startTime = DateTime.now();
+      _pdfDocument = await PdfDocument.openAsset(assetPath, useProgressiveLoading: true);
+      final endTime = DateTime.now();
+      final loadingTime = endTime.difference(startTime);
+      setState(() {
+        _isLoading = false;
+      });
+      print('PDF loaded in $loadingTime');
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'Failed to load PDF: $e';
+        _isLoading = false;
+      });
+    }
   }
 
   @override
   void initState() {
     super.initState();
     // _loadPdfFromNetwork();
-    final startTime = DateTime.now();
-    _loadPdfData('assets/sample_big.pdf').then((data) {
-      final endTime = DateTime.now();
-      final loadingTime = endTime.difference(startTime);
-      setState(() {
-        _pdfBytes = data;
-        _isLoading = false;
-      });
-      print('PDF loaded in $loadingTime');
-    });
+    _loadPdfAsset(_pdf);
   }
 
   @override
@@ -113,13 +96,6 @@ class _PdfViewerExampleState extends State<PdfViewerExample> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Advanced PDF Viewer Example'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.cloud_download),
-            onPressed: _loadPdfFromNetwork,
-            tooltip: 'Load PDF from Network',
-          ),
-        ],
       ),
       body: Column(
         children: [
@@ -219,24 +195,10 @@ class _PdfViewerExampleState extends State<PdfViewerExample> {
                       child: Text('big pdf'),
                     ),
                   },
-                  onValueChanged: (String? pdf) async {
+                  onValueChanged: (String? pdf) {
                     if (pdf != null) {
                       _pdf = pdf;
-                      final startTime = DateTime.now();
-                      _loadPdfData(pdf).then((data) {
-                        final endTime = DateTime.now();
-                        final loadingTime = endTime.difference(startTime);
-                        setState(() {
-                          _pdfBytes = data;
-                          _isLoading = false;
-                        });
-                        print('aseet tp memory loaded in ms ${loadingTime.inMilliseconds}');
-                        PdfDocument.openData(data!).then((document) {
-                          final endTime = DateTime.now();
-                          print(
-                              'pdf document loaded in ms ${endTime.difference(startTime).inMilliseconds}');
-                        });
-                      });
+                      _loadPdfAsset(pdf);
                     }
                   },
                 ),
@@ -246,23 +208,18 @@ class _PdfViewerExampleState extends State<PdfViewerExample> {
 
           // PDF Viewer
           Expanded(
-            child: _isLoading
+            child: _isLoading || _pdfDocument == null
                 ? const Center(child: CircularProgressIndicator())
                 : _errorMessage != null
                     ? Center(child: Text(_errorMessage!))
                     : JustPdfViewer(
-                        // assetPath: 'assets/sample_big.pdf',
-                        memory: _pdfBytes,
+                        document: _pdfDocument!,
+                        initialPage: 877,
                         pdfController: _pdfController,
-                        // The initialPage is now set within the JustPdfController's initialize method
-                        // which is called by JustPdfViewer.
                         onPageChanged: _handlePageChanged,
                         colorMode: _colorMode,
                         showScrollbar: _showScrollbar,
                         scrollDirection: _scrollDirection,
-                        // zoomLevel: _zoomLevel, // Pass the zoom level
-                        onDocumentLoaded: (document) =>
-                            setState(() => _totalPages = document.pages.length),
                       ),
           ),
         ],

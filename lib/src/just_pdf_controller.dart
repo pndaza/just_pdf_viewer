@@ -1,18 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:pdfrx/pdfrx.dart';
+import 'zoom_controller.dart';
 
 export 'package:pdfrx/pdfrx.dart' show PdfDocument;
 
 class JustPdfController with ChangeNotifier {
   PdfDocument? _document;
   PageController? _pageController;
+  ZoomController? _zoomController;
   int _currentPage = 0;
   int? _pendingPage;
   double _currentScale = 1.0;
   bool _ownsController = false;
   bool _isAttaching = false;
 
-  void initialize(PdfDocument document, {int initialPage = 0, PageController? pageController}) {
+  void initialize(PdfDocument document, {int initialPage = 0, PageController? pageController, ZoomController? zoomController}) {
     _document = document;
     _currentPage = initialPage.clamp(0, document.pages.length - 1);
     if (pageController != null) {
@@ -22,6 +24,13 @@ class JustPdfController with ChangeNotifier {
       _pageController = PageController(initialPage: _currentPage);
       _ownsController = true;
     }
+    
+    // Initialize zoom controller
+    if (zoomController != null) {
+      _zoomController = zoomController;
+      _zoomController!.addListener(_onZoomChanged);
+    }
+    
     notifyListeners();
   }
 
@@ -61,7 +70,62 @@ class JustPdfController with ChangeNotifier {
   int get currentPage => _currentPage;
   double get currentScale => _currentScale;
   PageController? get pageController => _pageController;
+  ZoomController? get zoomController => _zoomController;
   PdfDocument? get document => _document;
+
+  // Zoom control methods
+  void zoomIn({double step = 0.25}) {
+    if (_zoomController != null) {
+      _zoomController!.zoomIn(step: step);
+    }
+  }
+
+  void zoomOut({double step = 0.25}) {
+    if (_zoomController != null) {
+      _zoomController!.zoomOut(step: step);
+    }
+  }
+
+  void setZoomLevel(double scale) {
+    if (_zoomController != null) {
+      _zoomController!.setScale(scale);
+    }
+  }
+
+  void resetZoom() {
+    if (_zoomController != null) {
+      _zoomController!.reset();
+    }
+  }
+
+  void fitToWidth() {
+    if (_zoomController != null) {
+      _zoomController!.fitToWidth();
+    }
+  }
+
+  void fitToHeight() {
+    if (_zoomController != null) {
+      _zoomController!.fitToHeight();
+    }
+  }
+
+  void centerContent() {
+    if (_zoomController != null) {
+      _zoomController!.centerContent();
+    }
+  }
+
+  // Internal zoom change handler
+  void _onZoomChanged() {
+    if (_zoomController != null) {
+      final newScale = _zoomController!.currentScale;
+      if (_currentScale != newScale) {
+        _currentScale = newScale;
+        notifyListeners();
+      }
+    }
+  }
 
   void gotoPage(int page) {
     if (_document == null) return;
@@ -110,6 +174,11 @@ class JustPdfController with ChangeNotifier {
 
   @override
   void dispose() {
+    // Remove zoom controller listener
+    if (_zoomController != null) {
+      _zoomController!.removeListener(_onZoomChanged);
+    }
+    
     // Only dispose controller if we created it ourselves
     if (_ownsController && _pageController != null) {
       _pageController!.dispose();

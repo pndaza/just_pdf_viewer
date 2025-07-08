@@ -1,356 +1,519 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
+import 'package:pdfrx/pdfrx.dart';
+
 import 'color_mode.dart';
-import 'zoom_view.dart';
-import 'zoom_controller.dart';
 import 'just_pdf_controller.dart';
 import 'pdf_page_item.dart';
-import 'utils/viewport_utils.dart';
+import 'pdf_source.dart';
+import 'zoom_controller.dart';
+import 'zoom_view.dart';
 
 typedef OnPageChanged = void Function(int);
+typedef OnDocumentLoaded = void Function(PdfDocument);
+typedef OnDocumentError = void Function(dynamic);
 
-class JustPdfViewer extends StatefulWidget {
-  final PdfDocument document; 
+/// Configuration for PDF viewer display options.
+@immutable
+class PdfViewerConfig {
   final int initialPage;
   final Axis scrollDirection;
-  final JustPdfController? pdfController;
-  final OnPageChanged? onPageChanged;
   final ColorMode colorMode;
   final bool showScrollbar;
   final double maxScale;
   final double minScale;
   final Color? scrollbarColor;
-  final Widget? loadingWidget;
-  final Widget? errorWidget;
-  final ZoomController? zoomController;
 
-  const JustPdfViewer({
-    super.key,
-    required this.document, // Make document required
+  const PdfViewerConfig({
     this.initialPage = 1,
     this.scrollDirection = Axis.vertical,
-    this.pdfController,
-    this.onPageChanged,
     this.colorMode = ColorMode.day,
     this.showScrollbar = true,
     this.maxScale = 5.0,
     this.minScale = 1.0,
     this.scrollbarColor,
+  });
+
+  /// Creates a copy with modified values.
+  PdfViewerConfig copyWith({
+    int? initialPage,
+    Axis? scrollDirection,
+    ColorMode? colorMode,
+    bool? showScrollbar,
+    double? maxScale,
+    double? minScale,
+    Color? scrollbarColor,
+  }) {
+    return PdfViewerConfig(
+      initialPage: initialPage ?? this.initialPage,
+      scrollDirection: scrollDirection ?? this.scrollDirection,
+      colorMode: colorMode ?? this.colorMode,
+      showScrollbar: showScrollbar ?? this.showScrollbar,
+      maxScale: maxScale ?? this.maxScale,
+      minScale: minScale ?? this.minScale,
+      scrollbarColor: scrollbarColor ?? this.scrollbarColor,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is PdfViewerConfig &&
+        other.initialPage == initialPage &&
+        other.scrollDirection == scrollDirection &&
+        other.colorMode == colorMode &&
+        other.showScrollbar == showScrollbar &&
+        other.maxScale == maxScale &&
+        other.minScale == minScale &&
+        other.scrollbarColor == scrollbarColor;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        initialPage,
+        scrollDirection,
+        colorMode,
+        showScrollbar,
+        maxScale,
+        minScale,
+        scrollbarColor,
+      );
+}
+
+/// Configuration for PDF viewer callbacks and controllers.
+@immutable
+class PdfViewerCallbacks {
+  final OnPageChanged? onPageChanged;
+  final OnDocumentLoaded? onDocumentLoaded;
+  final OnDocumentError? onDocumentError;
+
+  const PdfViewerCallbacks({
+    this.onPageChanged,
+    this.onDocumentLoaded,
+    this.onDocumentError,
+  });
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is PdfViewerCallbacks &&
+        other.onPageChanged == onPageChanged &&
+        other.onDocumentLoaded == onDocumentLoaded &&
+        other.onDocumentError == onDocumentError;
+  }
+
+  @override
+  int get hashCode => Object.hash(onPageChanged, onDocumentLoaded, onDocumentError);
+}
+
+/// Configuration for PDF viewer UI customization.
+@immutable
+class PdfViewerUI {
+  final Widget? loadingWidget;
+  final Widget? errorWidget;
+
+  const PdfViewerUI({
     this.loadingWidget,
     this.errorWidget,
-    this.zoomController,
   });
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is PdfViewerUI &&
+        other.loadingWidget == loadingWidget &&
+        other.errorWidget == errorWidget;
+  }
+
+  @override
+  int get hashCode => Object.hash(loadingWidget, errorWidget);
+}
+
+/// A Flutter widget for displaying PDF documents with various configuration options.
+class JustPdfViewer extends StatefulWidget {
+  final PdfSource pdfSource;
+  final PdfViewerConfig config;
+  final PdfViewerCallbacks callbacks;
+  final PdfViewerUI ui;
+  final JustPdfController? pdfController;
+  final ZoomController? zoomController;
+  final PdfOpenConfig? pdfOpenConfig;
+
+  const JustPdfViewer({
+    super.key,
+    required this.pdfSource,
+    this.config = const PdfViewerConfig(),
+    this.callbacks = const PdfViewerCallbacks(),
+    this.ui = const PdfViewerUI(),
+    this.pdfController,
+    this.zoomController,
+    this.pdfOpenConfig,
+  });
+
+  /// Creates a PDF viewer from an asset.
+  factory JustPdfViewer.asset(
+    String name, {
+    Key? key,
+    PdfViewerConfig config = const PdfViewerConfig(),
+    PdfViewerCallbacks callbacks = const PdfViewerCallbacks(),
+    PdfViewerUI ui = const PdfViewerUI(),
+    JustPdfController? pdfController,
+    ZoomController? zoomController,
+    PdfOpenConfig? pdfOpenConfig,
+  }) =>
+      JustPdfViewer(
+        key: key,
+        pdfSource: AssetSource(name),
+        config: config,
+        callbacks: callbacks,
+        ui: ui,
+        pdfController: pdfController,
+        zoomController: zoomController,
+        pdfOpenConfig: pdfOpenConfig,
+      );
+
+  /// Creates a PDF viewer from a file.
+  factory JustPdfViewer.file(
+    String filePath, {
+    Key? key,
+    PdfViewerConfig config = const PdfViewerConfig(),
+    PdfViewerCallbacks callbacks = const PdfViewerCallbacks(),
+    PdfViewerUI ui = const PdfViewerUI(),
+    JustPdfController? pdfController,
+    ZoomController? zoomController,
+    PdfOpenConfig? pdfOpenConfig,
+  }) =>
+      JustPdfViewer(
+        key: key,
+        pdfSource: FileSource(filePath),
+        config: config,
+        callbacks: callbacks,
+        ui: ui,
+        pdfController: pdfController,
+        zoomController: zoomController,
+        pdfOpenConfig: pdfOpenConfig,
+      );
+
+  /// Creates a PDF viewer from binary data.
+  factory JustPdfViewer.data(
+    Uint8List data, {
+    Key? key,
+    PdfViewerConfig config = const PdfViewerConfig(),
+    PdfViewerCallbacks callbacks = const PdfViewerCallbacks(),
+    PdfViewerUI ui = const PdfViewerUI(),
+    JustPdfController? pdfController,
+    ZoomController? zoomController,
+    PdfOpenConfig? pdfOpenConfig,
+  }) =>
+      JustPdfViewer(
+        key: key,
+        pdfSource: DataSource(data),
+        config: config,
+        callbacks: callbacks,
+        ui: ui,
+        pdfController: pdfController,
+        zoomController: zoomController,
+        pdfOpenConfig: pdfOpenConfig,
+      );
+
+  /// Creates a PDF viewer from a URI.
+  factory JustPdfViewer.uri(
+    Uri uri, {
+    Key? key,
+    PdfViewerConfig config = const PdfViewerConfig(),
+    PdfViewerCallbacks callbacks = const PdfViewerCallbacks(),
+    PdfViewerUI ui = const PdfViewerUI(),
+    JustPdfController? pdfController,
+    ZoomController? zoomController,
+    PdfOpenConfig? pdfOpenConfig,
+    Map<String, String>? headers,
+    bool withCredentials = false,
+  }) =>
+      JustPdfViewer(
+        key: key,
+        pdfSource: UriSource(uri, headers: headers, withCredentials: withCredentials),
+        config: config,
+        callbacks: callbacks,
+        ui: ui,
+        pdfController: pdfController,
+        zoomController: zoomController,
+        pdfOpenConfig: pdfOpenConfig,
+      );
+
+  /// Creates a PDF viewer from a URL string.
+  factory JustPdfViewer.url(
+    String url, {
+    Key? key,
+    PdfViewerConfig config = const PdfViewerConfig(),
+    PdfViewerCallbacks callbacks = const PdfViewerCallbacks(),
+    PdfViewerUI ui = const PdfViewerUI(),
+    JustPdfController? pdfController,
+    ZoomController? zoomController,
+    PdfOpenConfig? pdfOpenConfig,
+    Map<String, String>? headers,
+    bool withCredentials = false,
+  }) =>
+      JustPdfViewer.uri(
+        Uri.parse(url),
+        key: key,
+        config: config,
+        callbacks: callbacks,
+        ui: ui,
+        pdfController: pdfController,
+        zoomController: zoomController,
+        pdfOpenConfig: pdfOpenConfig,
+        headers: headers,
+        withCredentials: withCredentials,
+      );
 
   @override
   State<JustPdfViewer> createState() => _JustPdfViewerState();
 }
 
-class _JustPdfViewerState extends State<JustPdfViewer>
-    with WidgetsBindingObserver, AutomaticKeepAliveClientMixin {
+class _JustPdfViewerState extends State<JustPdfViewer> {
   late final JustPdfController _controller;
+  late final ZoomController _zoomController;
   PageController? _pageController;
   PdfDocument? _document;
-  bool _isLoading = true;
-  dynamic _loadError;
-  bool _canScroll = true;
-  Timer? _scrollbarHideTimer;
-  bool _isScrollbarVisible = false;
-  double _currentViewportFraction = 0.8;
-  bool _isInitializing = false;
-
-  // Cache values to prevent unnecessary rebuilds
-  Size? _lastConstraints;
-  Axis? _lastScrollDirection;
-  ColorMode? _lastColorMode;
-
-  double _scrollbarTopPadding = 0.0;
-
-  @override
-  bool get wantKeepAlive => true;
+  dynamic _error;
+  bool _loading = true;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    _controller = JustPdfController()..addListener(_handleControllerChange);
-
-    _lastScrollDirection = widget.scrollDirection;
-    _lastColorMode = widget.colorMode;
-
-    print('[PDF Viewer] Initializing with page: ${widget.initialPage}');
+    _controller = widget.pdfController ?? JustPdfController();
+    _zoomController = widget.zoomController ?? ZoomController();
+    _zoomController.setScaleConstraints(
+      minScale: widget.config.minScale,
+      maxScale: widget.config.maxScale,
+    );
     _loadDocument();
-  }
-
-  void _handleControllerChange() {
-    if (mounted) {
-      setState(() {});
-    }
   }
 
   @override
   void didUpdateWidget(JustPdfViewer oldWidget) {
     super.didUpdateWidget(oldWidget);
-
-    bool needsControllerUpdate = false;
-
-    if (oldWidget.scrollDirection != widget.scrollDirection) {
-      _lastScrollDirection = widget.scrollDirection;
-      needsControllerUpdate = true;
-    }
-
-    if (oldWidget.colorMode != widget.colorMode) {
-      _lastColorMode = widget.colorMode;
-      setState(() {});
-    }
-
-    if (needsControllerUpdate) {
-      _handleScrollDirectionChange();
-    }
-
-    // The document parameter is now immutable, so we don't need to check for changes here.
-    // The user is responsible for providing a new PdfDocument instance if the source changes.
-    // If the document instance itself changes, we should reload.
-    if (oldWidget.document != widget.document) {
+    if (widget.pdfSource != oldWidget.pdfSource) {
       _loadDocument();
     }
-  }
-
-  void _handleScrollDirectionChange() {
-    // Store current page before disposing controller
-    final currentPage = _controller.currentPage;
-
-    // Dispose old controller
-    _pageController?.dispose();
-    _pageController = null;
-    _lastConstraints = null;
-
-    // Schedule rebuild after frame to ensure proper initialization
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        // Ensure we maintain the current page after scroll direction change
-        _controller.gotoPage(currentPage);
-        setState(() {});
-      }
-    });
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && _document == null) {
-      _loadDocument();
+    if (widget.config != oldWidget.config) {
+      _zoomController.setScaleConstraints(
+        minScale: widget.config.minScale,
+        maxScale: widget.config.maxScale,
+      );
+    }
+    if (widget.pdfController != oldWidget.pdfController) {
+      _controller = widget.pdfController ?? JustPdfController();
+    }
+    if (widget.zoomController != oldWidget.zoomController) {
+      _zoomController = widget.zoomController ?? ZoomController();
     }
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    if (widget.pdfController == null) {
+      _controller.dispose();
+    }
+    if (widget.zoomController == null) {
+      _zoomController.dispose();
+    }
     _pageController?.dispose();
-    _scrollbarHideTimer?.cancel();
-    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
   Future<void> _loadDocument() async {
     setState(() {
-      _isLoading = true;
-      _loadError = null;
-      _document = null; // Clear previous document
+      _loading = true;
+      _error = null;
     });
 
     try {
-      // The PdfDocument from pdfrx is already loaded when passed to the widget.
-      // We just need to assign it.
-      _document = widget.document;
-    } catch (error) {
-      _loadError = error;
-      // The onLoadError callback is removed as per the plan
+      final document = await widget.pdfSource.open(widget.pdfOpenConfig);
+      _document = document;
+      _pageController?.dispose();
+      _pageController = PageController(initialPage: widget.config.initialPage - 1);
+      _controller.initialize(
+        document,
+        initialPage: widget.config.initialPage - 1,
+        pageController: _pageController,
+        zoomController: _zoomController,
+      );
+      widget.callbacks.onDocumentLoaded?.call(document);
+    } catch (e) {
+      _error = e;
+      widget.callbacks.onDocumentError?.call(e);
     } finally {
       if (mounted) {
         setState(() {
-          _isLoading = false;
+          _loading = false;
         });
       }
     }
   }
 
-  void _showScrollbar() {
-    if (!widget.showScrollbar || !mounted) return;
-
-    _scrollbarHideTimer?.cancel();
-
-    if (mounted) {
-      SchedulerBinding.instance.addPostFrameCallback((_) {
-        if (mounted) setState(() => _isScrollbarVisible = true);
-      });
-    }
-    _scrollbarHideTimer = Timer(const Duration(seconds: 2), () {
-      if (mounted) setState(() => _isScrollbarVisible = false);
-    });
-  }
-
-  void _initializePageController(BoxConstraints constraints) {
-    if (_document == null || _isInitializing) return;
-
-    _isInitializing = true;
-
-    final width =
-        _document!.pages.fold(0.0, (prev, page) => prev + page.width) /
-            _document!.pages.length;
-    final height =
-        _document!.pages.fold(0.0, (prev, page) => prev + page.height) /
-            _document!.pages.length;
-
-    double newViewportFraction = ViewportUtils.calculateViewportFraction(
-        scrollAxis: widget.scrollDirection,
-        parentWidth: constraints.maxWidth,
-        parentHeight: constraints.maxHeight,
-        pdfWidth: width,
-        pdfHeight: height);
-
-    // Store current page before creating new controller
-    final currentPage = widget.initialPage;
-
-    // Dispose old controller
-    _pageController?.dispose();
-
-    // Create new controller with current page
-    print('[PDF Viewer] Initializing PageController with page: $currentPage');
-    _pageController = PageController(
-        initialPage: (currentPage - 1).clamp(0, _document!.pages.length - 1), // Convert to 0-based and clamp
-        viewportFraction: newViewportFraction,
-        keepPage: false);
-
-    _currentViewportFraction = newViewportFraction;
-
-    // Attach to internal controller, passing the initial page directly.
-    _controller.attachPageController(_pageController!,
-        initialPage: currentPage - 1);
-
-    // Initialize external controller if provided
-    if (widget.pdfController != null) {
-      widget.pdfController!.initialize(_document!,
-          initialPage: currentPage,
-          pageController: _pageController,
-          zoomController: widget.zoomController);
-    }
-
-    _isInitializing = false;
-  }
-
   @override
   Widget build(BuildContext context) {
-    super.build(context);
-
-    final double statusBarHeight = MediaQuery.of(context).padding.top;
-    if (widget.scrollDirection == Axis.vertical) {
-      _scrollbarTopPadding = statusBarHeight;
+    if (_loading) {
+      return Center(child: widget.ui.loadingWidget ?? const CircularProgressIndicator());
     }
 
-    if (_isLoading) {
-      return widget.loadingWidget ??
-          const Center(child: CircularProgressIndicator());
-    }
-
-    if (_loadError != null) {
-      return widget.errorWidget ??
-          Center(child: Text('Failed to load PDF: ${_loadError.toString()}'));
+    if (_error != null) {
+      return Center(
+        child: widget.ui.errorWidget ??
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.error, color: Colors.red, size: 50),
+                const SizedBox(height: 8),
+                Text('Failed to load PDF: $_error'),
+              ],
+            ),
+      );
     }
 
     if (_document == null) {
-      return const Center(child: Text('No document loaded'));
+      return const Center(child: Text('No document loaded.'));
     }
 
-    return LayoutBuilder(
-      builder: (BuildContext context, BoxConstraints constraints) {
-        final currentSize = Size(constraints.maxWidth, constraints.maxHeight);
-        final currentScrollDirection = widget.scrollDirection;
-
-        // Check if we need to reinitialize the page controller
-        bool needsReinit = _pageController == null ||
-            _lastConstraints == null ||
-            (_lastConstraints!.width - currentSize.width).abs() > 1 ||
-            (_lastConstraints!.height - currentSize.height).abs() > 1 ||
-            _lastScrollDirection != currentScrollDirection;
-
-        if (needsReinit) {
-          _lastConstraints = currentSize;
-          _lastScrollDirection = currentScrollDirection;
-          _initializePageController(constraints);
-        }
-
-        return NotificationListener<ScrollNotification>(
-          onNotification: (notification) {
-            _showScrollbar();
-            return false;
-          },
-          child: _buildPdfView(context, _document!),
+    final pageView = PageView.builder(
+      controller: _pageController,
+      scrollDirection: widget.config.scrollDirection,
+      itemCount: _document!.pages.length,
+      itemBuilder: (context, index) {
+        return PdfPageItem(
+          document: _document!,
+          pageNumber: index + 1,
+          colorMode: widget.config.colorMode,
         );
       },
+      onPageChanged: (page) {
+        _controller.onPageChanged(page);
+        widget.callbacks.onPageChanged?.call(page + 1);
+      },
     );
-  }
 
-  Widget _buildPdfView(BuildContext context, PdfDocument document) { // Change type to dynamic
-    if (_pageController == null) {
-      return const Center(child: CircularProgressIndicator());
+    final pdfView = ZoomView(
+      controller: _zoomController,
+      isMobile: defaultTargetPlatform == TargetPlatform.iOS ||
+          defaultTargetPlatform == TargetPlatform.android,
+      child: pageView,
+    );
+
+    if (widget.config.showScrollbar) {
+      return RawScrollbar(
+        controller: _pageController,
+        thumbColor: widget.config.scrollbarColor ?? Theme.of(context).scrollbarTheme.thumbColor?.resolve({}),
+        radius: const Radius.circular(4),
+        child: pdfView,
+      );
     }
 
-    Widget scrollableContent = RepaintBoundary(
-      child: ZoomView(
-        isMobile: defaultTargetPlatform == TargetPlatform.iOS ||
-            defaultTargetPlatform == TargetPlatform.android,
-        minScale: widget.minScale,
-        maxScale: widget.maxScale,
-        controller: widget.zoomController,
-        child: PageView.builder(
-          controller: _pageController,
-          scrollDirection: widget.scrollDirection,
-          physics: _canScroll
-              ? const ClampingScrollPhysics(parent: PageScrollPhysics())
-              : const NeverScrollableScrollPhysics(),
-          pageSnapping: widget.scrollDirection == Axis.horizontal,
-          onPageChanged: (index) {
-            // Update controller state
-            print('[PDF Viewer] Page changed to index: $index');
-            _controller.onPageChanged(index);
-            // Call external callback
-            widget.onPageChanged?.call(index + 1);
-          },
-          itemCount: document.pages.length,
-          itemBuilder: (context, index) {
-            return PdfPageItem(
-              document: document,
-              pageNumber: index + 1,
-              colorMode: widget.colorMode,
-            );
-          },
-        ),
-      ),
-    );
+    return pdfView;
+  }
+}
 
-    return ScrollConfiguration(
-      behavior: const ScrollBehavior().copyWith(
-        scrollbars: false,
-        overscroll: true,
-        physics: const BouncingScrollPhysics(),
-      ),
-      child: !widget.showScrollbar
-          ? scrollableContent
-          : RawScrollbar(
-              controller: _pageController,
-              thickness: 30,
-              minThumbLength: 50,
-              thumbColor:
-                  widget.scrollbarColor ?? Colors.blueGrey.withOpacity(0.8),
-              radius: const Radius.circular(10),
-              padding: EdgeInsets.only(
-                  right: 6, top: _scrollbarTopPadding, bottom: 24),
-              timeToFade: const Duration(seconds: 2),
-              crossAxisMargin: 4,
-              child: scrollableContent,
-            ),
+/// Extension methods for easier PDF viewer creation.
+extension PdfViewerExtensions on PdfSource {
+  /// Creates a PDF viewer widget from this source.
+  JustPdfViewer toViewer({
+    Key? key,
+    PdfViewerConfig config = const PdfViewerConfig(),
+    PdfViewerCallbacks callbacks = const PdfViewerCallbacks(),
+    PdfViewerUI ui = const PdfViewerUI(),
+    JustPdfController? pdfController,
+    ZoomController? zoomController,
+    PdfOpenConfig? pdfOpenConfig,
+  }) =>
+      JustPdfViewer(
+        key: key,
+        pdfSource: this,
+        config: config,
+        callbacks: callbacks,
+        ui: ui,
+        pdfController: pdfController,
+        zoomController: zoomController,
+        pdfOpenConfig: pdfOpenConfig,
+      );
+}
+
+/// Builder class for creating PDF viewers with a fluent API.
+class PdfViewerBuilder {
+  PdfSource? _pdfSource;
+  PdfViewerConfig _config = const PdfViewerConfig();
+  PdfViewerCallbacks _callbacks = const PdfViewerCallbacks();
+  PdfViewerUI _ui = const PdfViewerUI();
+  JustPdfController? _pdfController;
+  ZoomController? _zoomController;
+  PdfOpenConfig? _pdfOpenConfig;
+  Key? _key;
+
+  /// Sets the PDF source.
+  PdfViewerBuilder source(PdfSource source) {
+    _pdfSource = source;
+    return this;
+  }
+
+  /// Sets the configuration.
+  PdfViewerBuilder config(PdfViewerConfig config) {
+    _config = config;
+    return this;
+  }
+
+  /// Sets the callbacks.
+  PdfViewerBuilder callbacks(PdfViewerCallbacks callbacks) {
+    _callbacks = callbacks;
+    return this;
+  }
+
+  /// Sets the UI customization.
+  PdfViewerBuilder ui(PdfViewerUI ui) {
+    _ui = ui;
+    return this;
+  }
+
+  /// Sets the PDF controller.
+  PdfViewerBuilder controller(JustPdfController controller) {
+    _pdfController = controller;
+    return this;
+  }
+
+  /// Sets the zoom controller.
+  PdfViewerBuilder zoomController(ZoomController controller) {
+    _zoomController = controller;
+    return this;
+  }
+
+  /// Sets the PDF open configuration.
+  PdfViewerBuilder openConfig(PdfOpenConfig config) {
+    _pdfOpenConfig = config;
+    return this;
+  }
+
+  /// Sets the widget key.
+  PdfViewerBuilder key(Key key) {
+    _key = key;
+    return this;
+  }
+
+  /// Builds the PDF viewer widget.
+  JustPdfViewer build() {
+    if (_pdfSource == null) {
+      throw ArgumentError('PDF source must be provided');
+    }
+
+    return JustPdfViewer(
+      key: _key,
+      pdfSource: _pdfSource!,
+      config: _config,
+      callbacks: _callbacks,
+      ui: _ui,
+      pdfController: _pdfController,
+      zoomController: _zoomController,
+      pdfOpenConfig: _pdfOpenConfig,
     );
   }
 }

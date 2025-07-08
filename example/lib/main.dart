@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/services.dart';
 import 'package:just_pdf_viewer/just_pdf_viewer.dart';
 
 void main() => runApp(const PdfViewerExampleApp());
@@ -29,10 +28,6 @@ class _PdfViewerExampleState extends State<PdfViewerExample> {
   final JustPdfController _pdfController = JustPdfController();
   int _currentPage = 1;
   int? _totalPages;
-  bool _isLoading = true;
-  String? _errorMessage;
-  Uint8List? _pdfBytes;
-  PdfDocument? _pdfDocument; 
   ColorMode _colorMode = ColorMode.day;
   bool _showScrollbar = true;
   Axis _scrollDirection = Axis.vertical;
@@ -61,35 +56,6 @@ class _PdfViewerExampleState extends State<PdfViewerExample> {
   }
 
 
-  Future<void> _loadPdfAsset(String assetPath) async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-      _pdfDocument = null;
-    });
-    try {
-      final startTime = DateTime.now();
-      _pdfDocument = await PdfDocument.openAsset(assetPath, useProgressiveLoading: true);
-      final endTime = DateTime.now();
-      final loadingTime = endTime.difference(startTime);
-      setState(() {
-        _isLoading = false;
-      });
-      print('PDF loaded in $loadingTime');
-    } catch (e) {
-      setState(() {
-        _errorMessage = 'Failed to load PDF: $e';
-        _isLoading = false;
-      });
-    }
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    // _loadPdfFromNetwork();
-    _loadPdfAsset(_pdf);
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -198,7 +164,9 @@ class _PdfViewerExampleState extends State<PdfViewerExample> {
                   onValueChanged: (String? pdf) {
                     if (pdf != null) {
                       _pdf = pdf;
-                      _loadPdfAsset(pdf);
+                      setState(() {
+                        _pdf = pdf;
+                      });
                     }
                   },
                 ),
@@ -208,19 +176,27 @@ class _PdfViewerExampleState extends State<PdfViewerExample> {
 
           // PDF Viewer
           Expanded(
-            child: _isLoading || _pdfDocument == null
-                ? const Center(child: CircularProgressIndicator())
-                : _errorMessage != null
-                    ? Center(child: Text(_errorMessage!))
-                    : JustPdfViewer(
-                        document: _pdfDocument!,
-                        initialPage: 877,
-                        pdfController: _pdfController,
-                        onPageChanged: _handlePageChanged,
-                        colorMode: _colorMode,
-                        showScrollbar: _showScrollbar,
-                        scrollDirection: _scrollDirection,
-                      ),
+            child: JustPdfViewer.asset(
+              _pdf,
+              pdfController: _pdfController,
+              config: PdfViewerConfig(
+                initialPage: 877,
+                colorMode: _colorMode,
+                showScrollbar: _showScrollbar,
+                scrollDirection: _scrollDirection,
+              ),
+              callbacks: PdfViewerCallbacks(
+                onPageChanged: _handlePageChanged,
+                onDocumentLoaded: (document) {
+                  setState(() {
+                    _totalPages = document.pages.length;
+                  });
+                },
+                onDocumentError: (error) {
+                  // Handle error
+                },
+              ),
+            ),
           ),
         ],
       ),

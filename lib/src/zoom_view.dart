@@ -31,11 +31,13 @@ class _ZoomViewState extends State<ZoomView> with TickerProviderStateMixin {
   late AnimationController _animationController;
   Offset _lastTapPosition = Offset.zero;
   bool _isAnimating = false;
-
+  bool _isExternalController = false;
+ 
   @override
   void initState() {
     super.initState();
     
+    _isExternalController = widget.controller != null;
     // Use controller's transformation controller or create new one
     _transformationController = widget.controller?.transformationController ?? TransformationController();
 
@@ -66,7 +68,9 @@ class _ZoomViewState extends State<ZoomView> with TickerProviderStateMixin {
   @override
   void dispose() {
     _animationController.dispose();
-    _transformationController.dispose();
+    if (!_isExternalController) {
+      _transformationController.dispose();
+    }
     super.dispose();
   }
 

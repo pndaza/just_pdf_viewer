@@ -17,11 +17,11 @@ void main() {
     testApp = MaterialApp(
       home: Scaffold(
         body: ZoomView(
-          child: Container(width: 100, height: 100),
           minScale: 1.0,
           maxScale: 5.0,
           isMobile: true,
           onTransformationChanged: transformationCallback,
+          child: const SizedBox(width: 100, height: 100),
         ),
       ),
     );
@@ -75,9 +75,9 @@ void main() {
     testApp = MaterialApp(
       home: Scaffold(
         body: ZoomView(
-          child: Container(width: 100, height: 100),
           isMobile: false,
           onTransformationChanged: transformationCallback,
+          child: const SizedBox(width: 100, height: 100),
         ),
       ),
     );
@@ -85,7 +85,6 @@ void main() {
     await tester.pumpWidget(testApp);
     await tester.pumpAndSettle();
     
-    final initialTransformations = List.of(transformations);
     
     final zoomView = find.byType(ZoomView);
     await tester.tap(zoomView);

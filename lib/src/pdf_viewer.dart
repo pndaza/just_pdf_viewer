@@ -8,6 +8,7 @@ import 'pdf_page_item.dart';
 import 'pdf_source.dart';
 import 'zoom_controller.dart';
 import 'zoom_view.dart';
+import 'utils/viewport_utils.dart';
 
 typedef OnPageChanged = void Function(int);
 typedef OnDocumentLoaded = void Function(PdfDocument);
@@ -24,7 +25,6 @@ class PdfViewerConfig {
   final double minScale;
   final Color? scrollbarColor;
   final bool pageSnapping;
-
   const PdfViewerConfig({
     this.initialPage = 1,
     this.scrollDirection = Axis.vertical,
@@ -283,6 +283,7 @@ class _JustPdfViewerState extends State<JustPdfViewer> {
   PdfDocument? _document;
   dynamic _error;
   bool _loading = true;
+  double _viewportFraction = 1.0;
 
   @override
   void initState() {
@@ -338,7 +339,8 @@ class _JustPdfViewerState extends State<JustPdfViewer> {
       final document = await widget.pdfSource.open(widget.pdfOpenConfig);
       _document = document;
       _pageController?.dispose();
-      _pageController = PageController(initialPage: widget.config.initialPage - 1);
+      _pageController =
+          PageController(initialPage: widget.config.initialPage - 1);
       _controller.initialize(
         document,
         initialPage: widget.config.initialPage - 1,
@@ -382,41 +384,79 @@ class _JustPdfViewerState extends State<JustPdfViewer> {
       return const Center(child: Text('No document loaded.'));
     }
 
-    final pageView = PageView.builder(
-      controller: _pageController,
-      scrollDirection: widget.config.scrollDirection,
-      pageSnapping: widget.config.pageSnapping,
-      itemCount: _document!.pages.length,
-      itemBuilder: (context, index) {
-        return PdfPageItem(
-          document: _document!,
-          pageNumber: index + 1,
-          colorMode: widget.config.colorMode,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width =
+            _document!.pages.fold(0.0, (prev, page) => prev + page.width) /
+                _document!.pages.length;
+        final height =
+            _document!.pages.fold(0.0, (prev, page) => prev + page.height) /
+                _document!.pages.length;
+
+        final newViewportFraction = ViewportUtils.calculateViewportFraction(
+          scrollAxis: widget.config.scrollDirection,
+          parentWidth: constraints.maxWidth,
+          parentHeight: constraints.maxHeight,
+          pdfWidth: width,
+          pdfHeight: height,
         );
-      },
-      onPageChanged: (page) {
-        _controller.onPageChanged(page);
-        widget.callbacks.onPageChanged?.call(page + 1);
+
+        if ((_viewportFraction - newViewportFraction).abs() > 0.001) {
+          final currentPage = (_pageController?.hasClients ?? false)
+              ? _pageController!.page!.round()
+              : _controller.currentPage;
+          _pageController?.dispose();
+          _pageController = PageController(
+            initialPage: currentPage,
+            viewportFraction: newViewportFraction,
+          );
+          _controller.initialize(
+            _document!,
+            initialPage: currentPage,
+            pageController: _pageController,
+            zoomController: _zoomController,
+          );
+          _viewportFraction = newViewportFraction;
+        }
+
+        final pageView = PageView.builder(
+          controller: _pageController,
+          scrollDirection: widget.config.scrollDirection,
+          pageSnapping: widget.config.pageSnapping,
+          itemCount: _document!.pages.length,
+          itemBuilder: (context, index) {
+            return PdfPageItem(
+              document: _document!,
+              pageNumber: index + 1,
+              colorMode: widget.config.colorMode,
+            );
+          },
+          onPageChanged: (page) {
+            _controller.onPageChanged(page);
+            widget.callbacks.onPageChanged?.call(page + 1);
+          },
+        );
+
+        final pdfView = ZoomView(
+          controller: _zoomController,
+          isMobile: defaultTargetPlatform == TargetPlatform.iOS ||
+              defaultTargetPlatform == TargetPlatform.android,
+          child: pageView,
+        );
+
+        if (widget.config.showScrollbar) {
+          return RawScrollbar(
+            controller: _pageController,
+            thumbColor: widget.config.scrollbarColor ??
+                Theme.of(context).scrollbarTheme.thumbColor?.resolve({}),
+            radius: const Radius.circular(4),
+            child: pdfView,
+          );
+        }
+        return pdfView;
       },
     );
 
-    final pdfView = ZoomView(
-      controller: _zoomController,
-      isMobile: defaultTargetPlatform == TargetPlatform.iOS ||
-          defaultTargetPlatform == TargetPlatform.android,
-      child: pageView,
-    );
-
-    if (widget.config.showScrollbar) {
-      return RawScrollbar(
-        controller: _pageController,
-        thumbColor: widget.config.scrollbarColor ?? Theme.of(context).scrollbarTheme.thumbColor?.resolve({}),
-        radius: const Radius.circular(4),
-        child: pdfView,
-      );
-    }
-
-    return pdfView;
   }
 }
 

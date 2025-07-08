@@ -5,6 +5,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:just_pdf_viewer/just_pdf_viewer.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:flutter/foundation.dart';
 
 Future<Map<String, dynamic>> _getWindowState() async {
   try {
@@ -24,35 +25,48 @@ Future<Map<String, dynamic>> _getWindowState() async {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await windowManager.ensureInitialized();
 
-  // Prevent default window close behavior
-  await windowManager.setPreventClose(true);
+  // Initialize window manager for desktop platforms
+  if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
+    await windowManager.ensureInitialized();
 
-  final windowState = await _getWindowState();
-  final size = windowState.containsKey('width') && windowState.containsKey('height')
-      ? Size(windowState['width'], windowState['height'])
-      : const Size(1024, 768);
-  final position = windowState.containsKey('x') && windowState.containsKey('y')
-      ? Offset(windowState['x'], windowState['y'])
-      : null;
-  final isMaximized = windowState['isMaximized'] ?? false;
+    // Get window state
+    final windowState = await _getWindowState();
+    Size? size;
+    Offset? position;
+    bool isMaximized = false;
 
-  WindowOptions windowOptions = WindowOptions(
-    size: isMaximized ? null : size,
-    center: isMaximized ? false : (position == null),
-  );
-
-  windowManager.waitUntilReadyToShow(windowOptions, () async {
-    await windowManager.show();
-    await windowManager.focus();
-    
-    if (isMaximized) {
-      await windowManager.maximize();
-    } else if (position != null) {
-      await windowManager.setPosition(position!);
+    if (windowState.isNotEmpty) {
+      size = windowState.containsKey('width') && windowState.containsKey('height')
+          ? Size(windowState['width'], windowState['height'])
+          : const Size(1024, 768);
+      position = windowState.containsKey('x') && windowState.containsKey('y')
+          ? Offset(windowState['x'], windowState['y'])
+          : null;
+      isMaximized = windowState['isMaximized'] ?? false;
+    } else {
+      size = const Size(1024, 768);
     }
-  });
+
+    // Set window options
+    WindowOptions windowOptions = WindowOptions(
+      size: isMaximized ? null : size,
+      center: isMaximized ? false : (position == null),
+    );
+
+    await windowManager.waitUntilReadyToShow(windowOptions, () async {
+      if (isMaximized) {
+        await windowManager.maximize();
+      } else if (position != null) {
+        await windowManager.setPosition(position);
+      }
+      await windowManager.show();
+      await windowManager.focus();
+    });
+
+    // Prevent default window close behavior
+    await windowManager.setPreventClose(true);
+  }
 
   runApp(const PdfViewerExampleApp());
 }
@@ -89,18 +103,30 @@ class _PdfViewerExampleState extends State<PdfViewerExample> with WindowListener
   ColorMode _colorMode = ColorMode.day;
   bool _showScrollbar = true;
   Axis _scrollDirection = Axis.vertical;
-  double _zoomLevel = 1.0; // Initial zoom level
+  double _zoomLevel = 1.0;
   String _pdf = 'assets/sample_big.pdf';
+
+  // Check if the platform is desktop
+  bool get isDesktop {
+    return !kIsWeb &&
+           (Platform.isWindows ||
+            Platform.isLinux ||
+            Platform.isMacOS);
+  }
 
   @override
   void initState() {
     super.initState();
-    windowManager.addListener(this);
+    if (isDesktop) {
+      windowManager.addListener(this);
+    }
   }
 
   @override
   void dispose() {
-    windowManager.removeListener(this);
+    if (isDesktop) {
+      windowManager.removeListener(this);
+    }
     super.dispose();
   }
 
@@ -125,18 +151,19 @@ class _PdfViewerExampleState extends State<PdfViewerExample> with WindowListener
 
   @override
   void onWindowClose() async {
-    // Save window state before closing
-    await _saveWindowSize();
-    windowManager.destroy();
+    if (isDesktop) {
+      // Save window state before closing
+      await _saveWindowSize();
+      windowManager.destroy();
+    }
   }
 
-  void _setZoomLevel(double newZoomLevel) {
-    setState(() {
-      _zoomLevel = newZoomLevel.clamp(
-          0.5, 3.0); // Clamp zoom level between 0.5x and 3.0x
-    });
-    _pdfController.setZoomLevel(_zoomLevel); // Update scale using controller
-    _pdfController.centerContent();
+  @override
+  void onWindowFocus() {
+    if (isDesktop) {
+      // Make sure to call once.
+      setState(() {});
+    }
   }
 
   void _goToPage(int page) {
@@ -151,8 +178,6 @@ class _PdfViewerExampleState extends State<PdfViewerExample> with WindowListener
   void _handlePageChanged(int page) {
     setState(() => _currentPage = page);
   }
-
-
 
   @override
   Widget build(BuildContext context) {
@@ -179,14 +204,13 @@ class _PdfViewerExampleState extends State<PdfViewerExample> with WindowListener
                       icon: const Icon(Icons.navigate_next),
                       onPressed: () => _goToPage(_currentPage + 1),
                     ),
-                    SizedBox(width: 10),
+                    const SizedBox(width: 10),
                     CupertinoSegmentedControl<Axis>(
                       groupValue: _scrollDirection,
                       children: {
                         for (var axis in Axis.values)
                           axis: Padding(
-                            padding:
-                                const EdgeInsets.symmetric(horizontal: 8.0),
+                            padding: const EdgeInsets.symmetric(horizontal: 8.0),
                             child: Text(axis.toString().split('.').last),
                           ),
                       },
@@ -214,7 +238,6 @@ class _PdfViewerExampleState extends State<PdfViewerExample> with WindowListener
                     }
                   },
                 ),
-                const SizedBox(height: 10),
                 CupertinoSegmentedControl<double>(
                   groupValue: _zoomLevel,
                   children: {
@@ -241,7 +264,10 @@ class _PdfViewerExampleState extends State<PdfViewerExample> with WindowListener
                   },
                   onValueChanged: (double? zoom) {
                     if (zoom != null) {
-                      _setZoomLevel(zoom);
+                      setState(() {
+                        _zoomLevel = zoom;
+                        _pdfController.setZoomLevel(zoom);
+                      });
                     }
                   },
                 ),
@@ -281,6 +307,7 @@ class _PdfViewerExampleState extends State<PdfViewerExample> with WindowListener
                 colorMode: _colorMode,
                 showScrollbar: _showScrollbar,
                 scrollDirection: _scrollDirection,
+                pageSnapping: _scrollDirection == Axis.horizontal,
               ),
               callbacks: PdfViewerCallbacks(
                 onPageChanged: _handlePageChanged,

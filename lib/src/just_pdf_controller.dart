@@ -163,18 +163,6 @@ class JustPdfController with ChangeNotifier {
     }
   }
 
-  // Method to retry pending navigation
-  void _retryPendingNavigation() {
-    if (_pendingPage != null && _pageController?.hasClients == true && !_isAttaching) {
-      try {
-        _pageController!.jumpToPage(_pendingPage!);
-        _pendingPage = null;
-      } catch (e) {
-        // Keep pending if still fails
-      }
-    }
-  }
-
   @override
   void dispose() {
     // Remove zoom controller listener

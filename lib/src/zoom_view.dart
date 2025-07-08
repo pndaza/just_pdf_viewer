@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+import 'package:flutter/gestures.dart';
 import 'package:flutter/widgets.dart';
 import 'zoom_controller.dart';
 
@@ -112,19 +114,30 @@ class _ZoomViewState extends State<ZoomView> with TickerProviderStateMixin {
     }
   }
 
+  void _onPointerSignal(PointerSignalEvent pointerSignal) {
+    if (widget.isMobile) return;
+
+    if (pointerSignal is PointerScrollEvent) {
+      // Do nothing to disable zoom on scroll
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return InteractiveViewer(
-      transformationController: _transformationController,
-      panEnabled: true, // Enable pan for all platforms
-      scaleEnabled: true, // Enable scale for all platforms
-      maxScale: widget.maxScale,
-      minScale: widget.minScale,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onDoubleTap: _onDoubleTap,
-        onTapDown: (details) => _lastTapPosition = details.localPosition,
-        child: widget.child,
+    return Listener(
+      onPointerSignal: _onPointerSignal,
+      child: InteractiveViewer(
+        transformationController: _transformationController,
+        panEnabled: true, // Enable pan for all platforms
+        scaleEnabled: widget.isMobile, // Let mobile handle its own pinch-to-zoom
+        maxScale: widget.maxScale,
+        minScale: widget.minScale,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onDoubleTap: _onDoubleTap,
+          onTapDown: (details) => _lastTapPosition = details.localPosition,
+          child: widget.child,
+        ),
       ),
     );
   }

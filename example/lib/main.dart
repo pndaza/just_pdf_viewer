@@ -1,12 +1,70 @@
+import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:just_pdf_viewer/just_pdf_viewer.dart';
+import 'package:window_manager/window_manager.dart';
+import 'package:path_provider/path_provider.dart';
 
-void main() => runApp(const PdfViewerExampleApp());
+Future<Map<String, dynamic>> _getWindowState() async {
+  try {
+    final directory = await getApplicationDocumentsDirectory();
+    final file = File('${directory.path}/window_state.json');
 
-class PdfViewerExampleApp extends StatelessWidget {
+    if (await file.exists()) {
+      final content = await file.readAsString();
+      return jsonDecode(content);
+    }
+  } catch (e) {
+    // ignore: avoid_print
+    print('Failed to read window state: $e');
+  }
+  return {};
+}
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await windowManager.ensureInitialized();
+
+  // Prevent default window close behavior
+  await windowManager.setPreventClose(true);
+
+  final windowState = await _getWindowState();
+  final size = windowState.containsKey('width') && windowState.containsKey('height')
+      ? Size(windowState['width'], windowState['height'])
+      : const Size(1024, 768);
+  final position = windowState.containsKey('x') && windowState.containsKey('y')
+      ? Offset(windowState['x'], windowState['y'])
+      : null;
+  final isMaximized = windowState['isMaximized'] ?? false;
+
+  WindowOptions windowOptions = WindowOptions(
+    size: isMaximized ? null : size,
+    center: isMaximized ? false : (position == null),
+  );
+
+  windowManager.waitUntilReadyToShow(windowOptions, () async {
+    await windowManager.show();
+    await windowManager.focus();
+    
+    if (isMaximized) {
+      await windowManager.maximize();
+    } else if (position != null) {
+      await windowManager.setPosition(position!);
+    }
+  });
+
+  runApp(const PdfViewerExampleApp());
+}
+
+class PdfViewerExampleApp extends StatefulWidget {
   const PdfViewerExampleApp({super.key});
 
+  @override
+  State<PdfViewerExampleApp> createState() => _PdfViewerExampleAppState();
+}
+
+class _PdfViewerExampleAppState extends State<PdfViewerExampleApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -24,7 +82,7 @@ class PdfViewerExample extends StatefulWidget {
   State<PdfViewerExample> createState() => _PdfViewerExampleState();
 }
 
-class _PdfViewerExampleState extends State<PdfViewerExample> {
+class _PdfViewerExampleState extends State<PdfViewerExample> with WindowListener {
   final JustPdfController _pdfController = JustPdfController();
   int _currentPage = 1;
   int? _totalPages;
@@ -34,12 +92,51 @@ class _PdfViewerExampleState extends State<PdfViewerExample> {
   double _zoomLevel = 1.0; // Initial zoom level
   String _pdf = 'assets/sample_big.pdf';
 
+  @override
+  void initState() {
+    super.initState();
+    windowManager.addListener(this);
+  }
+
+  @override
+  void dispose() {
+    windowManager.removeListener(this);
+    super.dispose();
+  }
+
+  Future<void> _saveWindowSize() async {
+    final size = await windowManager.getSize();
+    final position = await windowManager.getPosition();
+    final isMaximized = await windowManager.isMaximized();
+
+    final windowState = {
+      'width': size.width,
+      'height': size.height,
+      'x': position.dx,
+      'y': position.dy,
+      'isMaximized': isMaximized,
+    };
+
+    final directory = await getApplicationDocumentsDirectory();
+    final file = File('${directory.path}/window_state.json');
+    await file.writeAsString(jsonEncode(windowState));
+    print('Window size saved: ${file.path}');
+  }
+
+  @override
+  void onWindowClose() async {
+    // Save window state before closing
+    await _saveWindowSize();
+    windowManager.destroy();
+  }
+
   void _setZoomLevel(double newZoomLevel) {
     setState(() {
       _zoomLevel = newZoomLevel.clamp(
           0.5, 3.0); // Clamp zoom level between 0.5x and 3.0x
     });
-    _pdfController.setScale(_zoomLevel); // Update scale using controller
+    _pdfController.setZoomLevel(_zoomLevel); // Update scale using controller
+    _pdfController.centerContent();
   }
 
   void _goToPage(int page) {
@@ -180,7 +277,7 @@ class _PdfViewerExampleState extends State<PdfViewerExample> {
               _pdf,
               pdfController: _pdfController,
               config: PdfViewerConfig(
-                initialPage: 877,
+                initialPage: 1,
                 colorMode: _colorMode,
                 showScrollbar: _showScrollbar,
                 scrollDirection: _scrollDirection,

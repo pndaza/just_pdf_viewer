@@ -16,12 +16,10 @@ class PdfPageItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      alignment: Alignment.center,
-      padding: const EdgeInsets.only(bottom: 2),
-      color: colorMode.backgroundColor,
-      child: ColorFiltered(
-        colorFilter: ColorFilter.matrix(predefinedFilters[colorMode]!),
+    return ColorFiltered(
+      colorFilter: ColorFilter.matrix(predefinedFilters[colorMode]!),
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 2),
         child: PdfPageView(
           document: document,
           pageNumber: pageNumber,

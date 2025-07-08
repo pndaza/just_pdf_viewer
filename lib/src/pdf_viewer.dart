@@ -23,6 +23,7 @@ class PdfViewerConfig {
   final double maxScale;
   final double minScale;
   final Color? scrollbarColor;
+  final bool pageSnapping;
 
   const PdfViewerConfig({
     this.initialPage = 1,
@@ -32,6 +33,7 @@ class PdfViewerConfig {
     this.maxScale = 5.0,
     this.minScale = 1.0,
     this.scrollbarColor,
+    this.pageSnapping = false,
   });
 
   /// Creates a copy with modified values.
@@ -43,6 +45,7 @@ class PdfViewerConfig {
     double? maxScale,
     double? minScale,
     Color? scrollbarColor,
+    bool? pageSnapping,
   }) {
     return PdfViewerConfig(
       initialPage: initialPage ?? this.initialPage,
@@ -52,6 +55,7 @@ class PdfViewerConfig {
       maxScale: maxScale ?? this.maxScale,
       minScale: minScale ?? this.minScale,
       scrollbarColor: scrollbarColor ?? this.scrollbarColor,
+      pageSnapping: pageSnapping ?? this.pageSnapping,
     );
   }
 
@@ -65,7 +69,8 @@ class PdfViewerConfig {
         other.showScrollbar == showScrollbar &&
         other.maxScale == maxScale &&
         other.minScale == minScale &&
-        other.scrollbarColor == scrollbarColor;
+        other.scrollbarColor == scrollbarColor &&
+        other.pageSnapping == pageSnapping;
   }
 
   @override
@@ -77,6 +82,7 @@ class PdfViewerConfig {
         maxScale,
         minScale,
         scrollbarColor,
+        pageSnapping,
       );
 }
 
@@ -379,7 +385,7 @@ class _JustPdfViewerState extends State<JustPdfViewer> {
     final pageView = PageView.builder(
       controller: _pageController,
       scrollDirection: widget.config.scrollDirection,
-      pageSnapping: widget.config.scrollDirection == Axis.horizontal,
+      pageSnapping: widget.config.pageSnapping,
       itemCount: _document!.pages.length,
       itemBuilder: (context, index) {
         return PdfPageItem(

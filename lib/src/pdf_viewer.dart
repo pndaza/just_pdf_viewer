@@ -1,9 +1,6 @@
 import 'dart:async';
-import 'dart:typed_data';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:pdfrx/pdfrx.dart';
 
 import 'color_mode.dart';
 import 'just_pdf_controller.dart';
@@ -382,6 +379,7 @@ class _JustPdfViewerState extends State<JustPdfViewer> {
     final pageView = PageView.builder(
       controller: _pageController,
       scrollDirection: widget.config.scrollDirection,
+      pageSnapping: widget.config.scrollDirection == Axis.horizontal,
       itemCount: _document!.pages.length,
       itemBuilder: (context, index) {
         return PdfPageItem(

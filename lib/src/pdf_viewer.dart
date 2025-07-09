@@ -109,7 +109,8 @@ class PdfViewerCallbacks {
   }
 
   @override
-  int get hashCode => Object.hash(onPageChanged, onDocumentLoaded, onDocumentError);
+  int get hashCode =>
+      Object.hash(onPageChanged, onDocumentLoaded, onDocumentError);
 }
 
 /// Configuration for PDF viewer UI customization.
@@ -237,7 +238,8 @@ class JustPdfViewer extends StatefulWidget {
   }) =>
       JustPdfViewer(
         key: key,
-        pdfSource: UriSource(uri, headers: headers, withCredentials: withCredentials),
+        pdfSource:
+            UriSource(uri, headers: headers, withCredentials: withCredentials),
         config: config,
         callbacks: callbacks,
         ui: ui,
@@ -363,7 +365,8 @@ class _JustPdfViewerState extends State<JustPdfViewer> {
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return Center(child: widget.ui.loadingWidget ?? const CircularProgressIndicator());
+      return Center(
+          child: widget.ui.loadingWidget ?? const CircularProgressIndicator());
     }
 
     if (_error != null) {
@@ -445,18 +448,27 @@ class _JustPdfViewerState extends State<JustPdfViewer> {
         );
 
         if (widget.config.showScrollbar) {
-          return RawScrollbar(
-            controller: _pageController,
-            thumbColor: widget.config.scrollbarColor ??
-                Theme.of(context).scrollbarTheme.thumbColor?.resolve({}),
-            radius: const Radius.circular(4),
-            child: pdfView,
+          return ScrollConfiguration(
+            behavior: const ScrollBehavior().copyWith(
+              scrollbars: false,
+            ),
+            child: RawScrollbar(
+              controller: _pageController,
+              thickness: 30,
+              minThumbLength: 50,
+              thumbColor: widget.config.scrollbarColor ??
+                  Colors.blueGrey.withValues(alpha: .8),
+              radius: const Radius.circular(10),
+              padding: const EdgeInsets.only(right: 6, top: 8, bottom: 16),
+              timeToFade: const Duration(seconds: 2),
+              crossAxisMargin: 4,
+              child: pdfView,
+            ),
           );
         }
         return pdfView;
       },
     );
-
   }
 }
 

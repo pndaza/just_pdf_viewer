@@ -9,6 +9,7 @@ class ZoomView extends StatefulWidget {
   final double maxScale;
   final bool isMobile;
   final ValueChanged<Matrix4>? onTransformationChanged;
+  final VoidCallback? onTap;
   final double initialScale;
   final ZoomController? controller;
 
@@ -21,6 +22,7 @@ class ZoomView extends StatefulWidget {
     this.onTransformationChanged,
     this.controller,
     this.initialScale = 1.0,
+    this.onTap,
   });
 
   @override
@@ -135,6 +137,7 @@ class _ZoomViewState extends State<ZoomView> with TickerProviderStateMixin {
           behavior: HitTestBehavior.opaque,
           onDoubleTap: _onDoubleTap,
           onTapDown: (details) => _lastTapPosition = details.localPosition,
+          onTap: widget.onTap,
           child: widget.child,
         ),
       ),

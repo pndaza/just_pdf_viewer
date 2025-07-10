@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ffi';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
@@ -92,11 +93,13 @@ class PdfViewerCallbacks {
   final OnPageChanged? onPageChanged;
   final OnDocumentLoaded? onDocumentLoaded;
   final OnDocumentError? onDocumentError;
+  final VoidCallback? onTap;
 
   const PdfViewerCallbacks({
     this.onPageChanged,
     this.onDocumentLoaded,
     this.onDocumentError,
+    this.onTap,
   });
 
   @override
@@ -105,12 +108,13 @@ class PdfViewerCallbacks {
     return other is PdfViewerCallbacks &&
         other.onPageChanged == onPageChanged &&
         other.onDocumentLoaded == onDocumentLoaded &&
-        other.onDocumentError == onDocumentError;
+        other.onDocumentError == onDocumentError &&
+        other.onTap == onTap;
   }
 
   @override
   int get hashCode =>
-      Object.hash(onPageChanged, onDocumentLoaded, onDocumentError);
+      Object.hash(onPageChanged, onDocumentLoaded, onDocumentError, onTap);
 }
 
 /// Configuration for PDF viewer UI customization.
@@ -444,6 +448,7 @@ class _JustPdfViewerState extends State<JustPdfViewer> {
           controller: _zoomController,
           isMobile: defaultTargetPlatform == TargetPlatform.iOS ||
               defaultTargetPlatform == TargetPlatform.android,
+          onTap: widget.callbacks.onTap,
           child: pageView,
         );
 

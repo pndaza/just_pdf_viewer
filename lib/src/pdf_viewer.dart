@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ffi';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
@@ -413,6 +412,7 @@ class _JustPdfViewerState extends State<JustPdfViewer> {
               ? _pageController!.page!.round()
               : _controller.currentPage;
           _pageController?.dispose();
+          _pageController = null;
           _pageController = PageController(
             initialPage: currentPage,
             viewportFraction: newViewportFraction,
@@ -424,6 +424,13 @@ class _JustPdfViewerState extends State<JustPdfViewer> {
             zoomController: _zoomController,
           );
           _viewportFraction = newViewportFraction;
+          
+          // Force a rebuild to update the scrollbar with the new controller
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              setState(() {});
+            }
+          });
         }
 
         final pageView = PageView.builder(

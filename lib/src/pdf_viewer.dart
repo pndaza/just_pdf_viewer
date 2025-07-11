@@ -424,15 +424,15 @@ class _JustPdfViewerState extends State<JustPdfViewer> {
             zoomController: _zoomController,
           );
           _viewportFraction = newViewportFraction;
-          
+          /*
           // Force a rebuild to update the scrollbar with the new controller
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) {
               setState(() {});
             }
           });
+        */
         }
-
         final pageView = PageView.builder(
           controller: _pageController,
           scrollDirection: widget.config.scrollDirection,
@@ -465,6 +465,11 @@ class _JustPdfViewerState extends State<JustPdfViewer> {
               scrollbars: false,
             ),
             child: RawScrollbar(
+              // create a new one whenever the controller is recreated
+              // fixed by gemini pro
+              // This UniqueKey() tells Flutter's diffing algorithm that this is a brand new widget,
+              // not an update to the old one.
+              key: UniqueKey(),
               controller: _pageController,
               thickness: 30,
               minThumbLength: 50,
